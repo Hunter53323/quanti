@@ -1,0 +1,24 @@
+{
+  "backtest": {
+    "cagr_pct": 11.5,
+    "sharpe": 0.59,
+    "max_dd_pct": 12.0,
+    "trades": 1,
+    "win_rate_pct": 0.0,
+    "profit_factor": 0.0,
+    "total_pnl": 0
+  },
+  "infra": {
+    "journal_entries": 119,
+    "breaker": {
+      "state": "tripped",
+      "trip_reason": "3 consecutive execution failures. Last: stress",
+      "trip_time": "2026-06-11T11:08:36.333770",
+      "consecutive_failures": 3,
+      "daily_pnl": -2500
+    },
+    "checkpoint": "2026-06-11T11:08:36.334772"
+  },
+  "acceptance_gate": true,
+  "run_at": "2026-06-11T11:08:36.340300"
+}

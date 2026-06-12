@@ -1,0 +1,154 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+exclude = ["data", "data.*", "notebooks", "notebooks.*", "scripts", "scripts.*"]
+
+[project]
+name = "quanti"
+version = "0.5.0"
+description = "A-share algorithmic trading system: multi-strategy backtest, paper, and live trading"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "quanti team"}]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "matplotlib>=3.8",
+    "python-dotenv>=1.0",
+    "loguru>=0.7",
+]
+readme = "AGENTS.md"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "black>=24.0",
+    "isort>=5.13",
+    "mypy>=1.8",
+]
+live = [
+    "tushare>=1.4",
+    "akshare>=1.15",
+]
+all = [
+    "quanti[dev,live]",
+]
+
+[project.urls]
+Repository = "https://github.com/example/quanti"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = [
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".venv",
+    "build",
+    "dist",
+    "data",
+    "logs",
+    ".omc",
+    "scripts",   # Research scripts use compact style
+]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",       # pycodestyle + pyflakes
+    "I",                  # isort
+    "N",                  # pep8-naming
+    "UP",                 # pyupgrade
+    "B",                  # flake8-bugbear
+    "SIM",                # flake8-simplify
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["quanti"]
+
+[tool.ruff.lint.per-file-ignores]
+# Research scripts: compact one-liner style is intentional
+"scripts/**.py" = ["E701", "E702", "E501", "E741", "F841", "E402", "B905", "B007"]
+# Backtest engine: tight numeric code, compact style
+"quanti/backtest/engine.py" = ["E701", "E702", "E501"]
+# Circuit breaker: long status messages
+"quanti/execution/circuit_breaker.py" = ["E501"]
+# Order manager: long f-string and transition table
+"quanti/execution/order_manager.py" = ["E501"]
+# Risk checker: string-type forward reference for MarketData; long messages
+"quanti/execution/risk.py" = ["F821", "E501"]
+# Broker: phase-5 stub with conditional imports and long strings
+"quanti/execution/broker.py" = ["E501", "F401"]
+# Strategy files: long signal_ref strings, compact format
+"quanti/strategy/etf_trend.py" = ["E501"]
+"quanti/strategy/dividend_barbell.py" = ["E501"]
+"quanti/strategy/stock_momentum.py" = ["E501"]
+"quanti/strategy/pe_band.py" = ["E501", "E701"]
+"quanti/strategy/cb_dual_low.py" = ["E501"]
+# Config: long env-var doc strings
+"quanti/config/settings.py" = ["E501"]
+# Monitor/logger: format string
+"quanti/monitor/logger.py" = ["E501"]
+# Journal: long SQL string
+"quanti/state/journal.py" = ["E501"]
+# Entry points: long log message strings
+"quanti/main_paper.py" = ["E501"]
+"quanti/main_live.py" = ["E501"]
+# Recovery: long arithmetic lines
+"quanti/state/recovery.py" = ["E501"]
+# Test code: short var names like l for low, l for loop are idiomatic
+"tests/**.py" = ["E741", "F841", "E501"]
+# Ingestion: standalone scripts with deferred imports
+"quanti/data/ingestion/**.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["quanti"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-v", "--tb=short", "--strict-markers"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["quanti"]
+omit = [
+    "quanti/main_paper.py",
+    "quanti/main_live.py",
+    "quanti/data/ingestion/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+]
+fail_under = 47

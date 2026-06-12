@@ -24,14 +24,26 @@ TOP_N = 3; STOP_PCT = -0.10; MA_P = 120; N_STOCKS = 100
 # ====================================================================
 # Data loading
 # ====================================================================
-def _digit(s):
-    """True for 6-digit stock codes, False for ETFs (start with 5,1,588)."""
-    if not (s.isdigit() and len(s) == 6):
-        return False
-    # Exclude ETFs: 51xxxx, 15xxxx, 58xxxx, 588xxx, 56xxxx, 51xxxx, 159xxx
-    if s.startswith(('5', '1', '588')):
-        return False
-    return True
+def load_stocks(n=N_STOCKS):
+    """Load top N stocks by volume. Uses symbol column (data-driven filter)."""
+    cand = []
+    for fp in sorted(DATA_DIR.glob("*.parquet")):
+        df = pd.read_parquet(fp)
+        sym = str(df["symbol"].iloc[0])
+        if not sym.isdigit():
+            continue  # ETF: sh510300, sz159915 have letters
+        df["date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
+        t = df[(df.date >= TEST_START) & (df.date <= TEST_END)]
+        tr = df[(df.date >= TRAIN_START) & (df.date <= TRAIN_END)]
+        if len(t) >= 100 and len(tr) >= 100:
+            cand.append((sym, float(t.volume.mean())))
+    cand.sort(key=lambda x: x[1], reverse=True)
+    stocks = {}
+    for code, _ in cand[:n]:
+        df = pd.read_parquet(DATA_DIR / f"{code}.parquet")
+        df["date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
+        stocks[code] = df.sort_values("date").set_index("date")
+    return stocks
 
 def load_etf(code):
     for sfx in [".SH.parquet", ".SZ.parquet", ".parquet"]:
@@ -42,24 +54,6 @@ def load_etf(code):
     return df.sort_values("date").set_index("date")
 
 def load_csi300(): return load_etf("CSI300")
-
-def load_stocks(n=N_STOCKS):
-    cand = []
-    for fp in sorted(DATA_DIR.glob("*.parquet")):
-        if not _digit(fp.stem): continue
-        df = pd.read_parquet(fp)
-        df["date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
-        t = df[(df.date >= TEST_START) & (df.date <= TEST_END)]
-        tr = df[(df.date >= TRAIN_START) & (df.date <= TRAIN_END)]
-        if len(t) >= 100 and len(tr) >= 100:
-            cand.append((fp.stem, float(t.volume.mean())))
-    cand.sort(key=lambda x: x[1], reverse=True)
-    stocks = {}
-    for code, _ in cand[:n]:
-        df = pd.read_parquet(DATA_DIR / f"{code}.parquet")
-        df["date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
-        stocks[code] = df.sort_values("date").set_index("date")
-    return stocks
 
 def fetch_pe_data():
     import sys; sys.path.insert(0, ".")

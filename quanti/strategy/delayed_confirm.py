@@ -100,6 +100,7 @@ class DelayedConfirmStrategy(BaseStrategy):
                 if sym==self.bond_etf or pos.quantity<=0: continue
                 odrs.append(Order(symbol=sym,side=OrderSide.SELL,quantity=pos.quantity,price=None,order_type="market",signal_ref=f"Sharp exit:{sym}"))
                 sharp_sold.add(sym)
+                self._hwm.pop(sym,None)  # prevent stale HWM on re-entry
             self._sharp_fired_recent=False
         for sym,pos in pf.positions.items():
             if sym==self.bond_etf or pos.quantity<=0 or sym in sharp_sold: continue
@@ -110,7 +111,16 @@ class DelayedConfirmStrategy(BaseStrategy):
             elif sym in self._hwm and pos.current_price>0:
                 loss=(pos.current_price/self._hwm[sym]-1)*100
                 if loss<self.stop_loss_pct: sell=True; reason=f"Stop:{loss:.1f}%"
-            if sell: odrs.append(Order(symbol=sym,side=OrderSide.SELL,quantity=pos.quantity,price=None,order_type="market",signal_ref=reason))
+            if sell:
+                odrs.append(Order(symbol=sym,side=OrderSide.SELL,quantity=pos.quantity,price=None,order_type="market",signal_ref=reason))
+                self._hwm.pop(sym,None)  # prevent stale HWM on re-entry
+        # Sell bonds FIRST so cash is available for stock BUYs below.
+        # Otherwise when entering from defense the engine processes BUYs before
+        # the bond SELL, checks cash, and skips the stock entry.
+        bp_pos=pf.positions.get(self.bond_etf); bu_units=bp_pos.quantity if bp_pos else 0
+        for sig in bs:
+            if bu_units>0: odrs.append(Order(symbol=self.bond_etf,side=OrderSide.SELL,quantity=bu_units,price=None,order_type="market",signal_ref=sig.reason))
+
         ne=[s for s in sb if s.symbol not in pf.positions]
         if ne and sz>0.02:
             tc=capital+sum(p.quantity*p.current_price for p in pf.positions.values())
@@ -120,9 +130,6 @@ class DelayedConfirmStrategy(BaseStrategy):
                 if px and px>0.01:
                     q=int(ps/px/100)*100
                     if q>=100: odrs.append(Order(symbol=sig.symbol,side=OrderSide.BUY,quantity=q,price=px,order_type="limit",signal_ref=sig.reason))
-        bp_pos=pf.positions.get(self.bond_etf); bu_units=bp_pos.quantity if bp_pos else 0
-        for sig in bs:
-            if bu_units>0: odrs.append(Order(symbol=self.bond_etf,side=OrderSide.SELL,quantity=bu_units,price=None,order_type="market",signal_ref=sig.reason))
         for sig in bb:
             bpx=self._get_price(self.bond_etf,pf,md)
             if bpx and bpx>0.01 and capital>1000:

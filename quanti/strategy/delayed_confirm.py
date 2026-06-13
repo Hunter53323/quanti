@@ -122,14 +122,20 @@ class DelayedConfirmStrategy(BaseStrategy):
             if bu_units>0: odrs.append(Order(symbol=self.bond_etf,side=OrderSide.SELL,quantity=bu_units,price=None,order_type="market",signal_ref=sig.reason))
 
         ne=[s for s in sb if s.symbol not in pf.positions]
-        if ne and sz>0.02:
+        if sb and sz>0.02:
             tc=capital+sum(p.quantity*p.current_price for p in pf.positions.values())
-            ps=tc*sz/max(len(ss),1)*0.92
-            for sig in ne:
+            ps=tc*sz/max(len(ss),1)*0.90
+            for sig in sb:
                 px=self._get_price(sig.symbol,pf,md)
                 if px and px>0.01:
                     q=int(ps/px/100)*100
-                    if q>=100: odrs.append(Order(symbol=sig.symbol,side=OrderSide.BUY,quantity=q,price=px,order_type="limit",signal_ref=sig.reason))
+                    if q<100: continue
+                    if sig.symbol in pf.positions:
+                        diff=q-pf.positions[sig.symbol].quantity
+                        if abs(diff)>=100:
+                            odrs.append(Order(symbol=sig.symbol,side=OrderSide.BUY if diff>0 else OrderSide.SELL,quantity=abs(diff),price=None,order_type="market",signal_ref=sig.reason))
+                    else:
+                        odrs.append(Order(symbol=sig.symbol,side=OrderSide.BUY,quantity=q,price=px,order_type="limit",signal_ref=sig.reason))
         for sig in bb:
             bpx=self._get_price(self.bond_etf,pf,md)
             if bpx and bpx>0.01 and capital>1000:

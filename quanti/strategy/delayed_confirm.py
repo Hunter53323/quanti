@@ -186,15 +186,15 @@ class DelayedConfirmStrategy(BaseStrategy):
         a120=(closes>ma120)&(~np.isnan(ma120)); a60=(closes>ma60)&(~np.isnan(ma60))
         N=self.confirm_days; M=self.cooldown_days; cd=cf=fd=-1
         for i in range(121,n):
-            if i<=cd: self._market_state[dates[i]]=0; continue
+            if i<=cd: self._market_state[dates[i]]=3; continue
             if fd>=0:
                 if a120[i]: self._market_state[dates[i]]=2; continue
                 else: fd=-1
             if cf>=0:
-                if not a120[i]: cd=i+M-1; self._market_state[dates[i]]=0; cf=-1; continue
+                if not a120[i]: cd=i+M-1; self._market_state[dates[i]]=3; cf=-1; continue
                 if i-cf+1==N: self._market_state[dates[i]]=2; fd=i; cf=-1
-                else: self._market_state[dates[i]]=0; continue
-            if a120[i] and not a120[i-1]: cf=i; self._market_state[dates[i]]=0
+                else: self._market_state[dates[i]]=1; continue
+            if a120[i] and not a120[i-1]: cf=i; self._market_state[dates[i]]=1
             elif a60[i]: self._market_state[dates[i]]=4
             else: self._market_state[dates[i]]=0
         self._csi300_bars_loaded=True

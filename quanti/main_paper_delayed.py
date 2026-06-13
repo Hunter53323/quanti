@@ -125,6 +125,7 @@ def main():
                            cash=cash, total_capital=cash + total_mv,
                            settled_cash=cash, timestamp=datetime.now())
 
+            strategy._csi300_bars_loaded = False  # rebuild state machine each tick to catch new data
             signals = strategy.generate_signals(md)
             if signals:
                 logger.info(f"SIGNALS: {[(s.symbol, s.side.value) for s in signals]}")

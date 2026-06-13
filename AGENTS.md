@@ -26,7 +26,8 @@ quanti/
 │   ├── pe_band.py              PEBandAllocation: CSI300 PE percentile -> equity/bond/gold mix
 │   ├── dividend_barbell.py     DividendBarbell: core-satellite with 510880/bond/gold/cash
 │   ├── cb_dual_low.py          CBDualLowStrategy: dual-low CB rotation (Phase 6)
-│   └── signal_filters.py       MarketEnvironmentFilter: is_trending, is_bear_market, is_forbidden_period, NT intervention detection
+│   ├── signal_filters.py       MarketEnvironmentFilter: is_trending, is_bear_market, is_forbidden_period, NT intervention detection
+│   ├── state_machine.py        StateMachineStrategy: 3-regime (BEAR/RANGE/BULL) with asymmetric confirmation. DailyStateMachine for incremental live use. LiveSignal JSON output dataclass.
 ├── backtest/
 │   └── engine.py               BacktestEngine: walk-forward, OOS, full metrics, T+1 settlement tracking. Uses RiskChecker.
 ├── execution/
@@ -45,33 +46,24 @@ quanti/
 ├── main_paper.py               Paper trading entry point (delegates to EngineRunner)
 └── main_live.py                Live trading entry point (delegates to EngineRunner)
 
-scripts/
-├── _research_helpers.py        Shared helpers for standalone research scripts: load_etf, load_csi300, filter_period, compute_metrics, year_metrics, fmt_pct (+ aliases)
-├── fetch_history.py            Batch historical ETF data download (AkShare Sina source)
-├── batch_download_stocks.py    Batch stock data download (CSI300+CSI500 constituents, StockFetcher)
-├── live_signal.py              Daily pre-market signal generation for StockMomentumStrategy
-├── sweep_threshold.py          Single-param ENTRY_SCORE_THRESHOLD sweep using BacktestEngine
-├── run_phase3_backtest.py      AB comparison: baseline vs 5-condition vs extended universe + ADX sweep
-├── phase3_minimal.py           Fast Phase 3: legacy vs resonance on last 800 bars. Includes progress-file logging for external monitoring.
-├── phase3_train_val_test.py    3-way chronological split (train/validate/live-test) with gate check
-├── phase3_v2_backtest.py       StockMomentumStrategy via BacktestEngine on train/validate/live-test split
-├── prod_strategy_backtest.py   ETFTrendStrategy param grid on 2022-2025 + gold-aware variant experiment
-├── run_dividend_barbell_backtest.py  DividendBarbell backtest via BacktestEngine
-├── run_pe_band_backtest.py     PEBandAllocation backtest with rolling PE provider
-├── backtest_alt_strategies.py  4 non-trend strategies (A/B/C/D) on 6 ETFs. Report in Chinese.
-├── backtest_enhanced.py        Same 4 strategies + charts, year-by-year, train-vs-test, heatmaps
-├── backtest_hybrid_strategies.py  4 multi-strategy schemes (S1-S4) on 30 CSI300 stocks
-├── backtest_hybrid_v2.py       Expanded: 9 schemes (S1-S9) on 100 stocks. Uses PE data for S5.
-├── strategies_enhanced.py      S5-S9 enhanced strategy implementations (imported by v2 and complete)
-├── run_complete_backtest.py    Orchestrator: all 9 schemes self-contained in one file
-├── exploratory_strategies.py   6 exploratory strategies (E1-E6): Bollinger, RSI-2, vol-target, cross-market momentum, gap fade, ensemble
-├── gold_and_oversold.py        7 creative strategies (F1-F7): gold rotation, MA scale-in, panic capitulation, barbell, trend filter, gold ratio, seasonal
-├── deep_review.py              Deep-dive: train-vs-test scatter, cost drag analysis, breakout logic audit
-├── param_grid_search.py        54-combo grid search + diagnostic mode (--mode grid_search|diagnostic)
-├── deep_failure_analysis.py    Thin redirect wrapper -> param_grid_search.py --mode diagnostic
-└── strategy_fix_validate.py    DD-exit threshold sweep + vol-scaled sizing validation
+scripts/                            15 scripts — state machine research pipeline
+├── state_machine_strategy.py   **PRIMARY**: Full 81-param grid search for 3-regime state machine. Train(2015-2021)→Test(2022-2025). Generates data/state_machine_report.md.
+├── unified_report.py           Single-engine unified report: alpha decomposition + monthly distribution + parameter sweep + yearly breakdown.
+├── alpha_decomposition.py      Decomposes strategy CAGR into market-timing vs stock-selection alpha contributions.
+├── audit_lookahead.py          9-step lookahead bias audit: full-series vs causal comparison for every computation step.
+├── causal_backtest_verify.py   Gold-standard independent causal backtest: day-by-day state machine, 0 mismatches for all 81 param combos.
+├── turnover_analysis.py        Turnover analysis: per-state, per-year, transition-triggered. Identified and fixed BEAR-month 100% turnover bug.
+├── martingale_accumulate.py    FAILED: pyramid-position accumulation. A-share momentum stocks rotate too fast for accumulation (93% idle cash).
+├── pure_alpha_strategy.py      No-timing benchmark: always-fully-invested Top-N momentum. Proves stock-selection alpha exists independently.
+├── state_machine_v2.py         FAILED: risk-budgeting enhancements (vol target, ATR stop, DD circuit breaker). None improved V1.
+├── final_improvements.py      5 batch tests: ETF rotation, vol filter, walk-forward validation, weekly vs monthly, gradient stop-loss.
+├── final_friction_analysis.py  Commission/slippage sensitivity, capacity estimation, parameter stability, monthly return distribution.
+├── backtest_state_machine_live.py  Production-config backtest: weekly/monthly rebalance, ATR trailing stop, round-lot sizing, dual momentum.
+├── deploy_config_sweep.py      Rapid Top-N + dual momentum + round-lot parameter sweep for live deployment config.
+├── bull_trap_analysis.py       CSI300 120MA breakout classification: 72 breaks identified, 24% true. Foundation for asymmetric confirmation design.
+└── delayed_confirm_backtest.py Precursor: N-day post-breakout confirmation window. Led to the state machine's asymmetric confirmation mechanism.
 
-tests/                             183 tests across 15 files
+tests/                             16 test files
 ├── test_strategy_entry.py         17 tests: MA alignment, BB expansion, volume surge, ADX, DI diff, RSI, composite entry
 ├── test_strategy_exit.py          18 tests: ATR stop, RSI tighten, time stop, volatility stop, flat stop, gap risk, policy tighten, composite exit
 ├── test_strategy_signals.py        6 tests: 5-condition buy, MA cross sell, no-trend, insufficient data, stop-loss
@@ -118,6 +110,12 @@ All scripts compute `_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abs
 ### 8. Standalone research scripts share helpers via _research_helpers.py
 Scripts that load data directly from Parquet (without `quanti.data.storage`) share `load_etf`, `load_csi300`, `filter_period`, `compute_metrics`, `year_metrics`, `fmt_pct` from `scripts/_research_helpers.py`. Do not add new inline copies of these functions to new scripts. The module also provides naming aliases (`filter_t`, `flt`, `metrics`, `calc_metrics`, `fmtp`, `fm`, `yearly`) for scripts that use different conventions.
 
+### 9. State machine backtest scripts are standalone research artifacts
+The state machine research scripts (`state_machine_strategy.py`, `alpha_decomposition.py`, etc.) duplicate indicator logic from `quanti/indicators.py` and data-loading logic from `quanti/data/storage.py`. This is intentional — they form a self-contained research pipeline that must run without depending on the production strategy classes. The production module `quanti/strategy/state_machine.py` is a clean extraction of the research findings, using the shared quanti infrastructure. When updating the research scripts, keep them self-contained. When deploying to production, use the `quanti/strategy/state_machine.py` module.
+
+### 10. All state machine backtest numbers must come from the same engine
+The `unified_report.py` script was created specifically to fix an internal consistency audit finding where yearly breakdowns and summary CAGR/MaxDD came from different backtest engines. Any new analysis scripts that produce numeric claims must use the `run_backtest()` function from `state_machine_strategy.py` (or `unified_report.py`). Do not create additional backtest engine variants for the same strategy. If a new analysis (e.g., turnover, friction, decomposition) is needed, extend `unified_report.py` to include it.
+
 ## Entry Strategy: Weighted Composite Scoring
 
 `ETFTrendStrategy.generate_signals()` computes 5 sub-scores (0-100 each), applies weights, and fires BUY when the composite >= `ENTRY_SCORE_THRESHOLD` (default 55):
@@ -157,20 +155,43 @@ All wrapped in `BreakerManager`. State persisted in journal checkpoints. The `ge
 ## How to Run
 
 ```powershell
-# Tests (183 tests in 15 files)
+# Tests (16 test files)
 python -m pytest tests/ -v
 
-# Phase 3 backtest (after loading data)
-python scripts/run_phase3_backtest.py
+# ── State Machine Strategy (primary research pipeline) ──
 
-# Fast Phase 3 (last 800 bars, with progress-file monitoring)
-python scripts/phase3_minimal.py
+# Full 81-parameter grid search + report generation (~30 min)
+python scripts/state_machine_strategy.py          # → data/state_machine_report.md
 
-# Grid search (54 parameter combinations)
-python scripts/param_grid_search.py --mode grid_search
+# Unified single-engine report: alpha decomposition + monthly distribution + parameter sweep
+python scripts/unified_report.py                  # → FINAL_REPORT.md
 
-# Diagnostic mode (sub-period breakdowns, failure analysis)
-python scripts/param_grid_search.py --mode diagnostic
+# Lookahead bias audit: 9 systematic checks, full-series vs causal
+python scripts/audit_lookahead.py
+
+# Independent causal backtest verification (gold standard)
+python scripts/causal_backtest_verify.py
+
+# Turnover analysis: per-state, per-year, transition-triggered
+python scripts/turnover_analysis.py
+
+# Alpha decomposition: timing vs stock selection
+python scripts/alpha_decomposition.py
+
+# Friction & robustness: commission/slippage sensitivity, capacity, stability
+python scripts/final_friction_analysis.py
+
+# Pure stock alpha benchmark (no market timing)
+python scripts/pure_alpha_strategy.py
+
+# Production-config deployment sweep (round-lot + dual momentum)
+python scripts/deploy_config_sweep.py
+
+# Failed explorations (documented, not for production)
+python scripts/martingale_accumulate.py
+python scripts/state_machine_v2.py
+
+# ── Production ──
 
 # Paper trading
 python -m quanti.main_paper
@@ -181,11 +202,38 @@ python -m quanti.main_live
 
 ## Script Categories
 
-- **Operational**: `fetch_history.py`, `batch_download_stocks.py`, `live_signal.py`, `sweep_threshold.py` -- data bootstrapping and daily use
-- **BacktestEngine users**: `run_phase3_backtest.py`, `phase3_minimal.py`, `phase3_train_val_test.py`, `phase3_v2_backtest.py`, `prod_strategy_backtest.py`, `run_dividend_barbell_backtest.py`, `run_pe_band_backtest.py` -- proper use of strategy classes through the engine
-- **Standalone research**: `backtest_alt_strategies.py`, `backtest_enhanced.py`, `backtest_hybrid_strategies.py`, `backtest_hybrid_v2.py`, `strategies_enhanced.py`, `run_complete_backtest.py`, `exploratory_strategies.py`, `gold_and_oversold.py`, `deep_review.py` -- self-contained with unique strategy ideas not yet integrated into quanti/strategy/
-- **Analytical tools**: `param_grid_search.py`, `strategy_fix_validate.py` -- parameter optimization and validation
-- **Infrastructure**: `_research_helpers.py`, `deep_failure_analysis.py` (redirect wrapper)
+All 15 scripts in `scripts/` form a single coherent research pipeline for the state machine strategy.
+
+### Core Research
+- `state_machine_strategy.py` — 81-param grid sweep, Train(2015-2021)→Test(2022-2025), generates report.
+- `unified_report.py` — Single-engine alpha decomposition + monthly distribution + parameter sweep.
+
+### Verification & Audit
+- `audit_lookahead.py` — 9-step lookahead bias audit.
+- `causal_backtest_verify.py` — Independent causal backtest verification.
+
+### Analysis
+- `alpha_decomposition.py` — Timing vs stock-selection alpha decomposition.
+- `turnover_analysis.py` — Turnover quantification and fix verification.
+- `final_friction_analysis.py` — Commission/slippage sensitivity, capacity, stability.
+
+### Benchmarks & Counterfactuals
+- `pure_alpha_strategy.py` — No-timing baseline proving stock-selection alpha.
+- `martingale_accumulate.py` — FAILED: pyramid accumulation (A-share momentum rotates too fast).
+- `state_machine_v2.py` — FAILED: incremental risk controls (none improved V1).
+
+### Batch Improvement Tests
+- `final_improvements.py` — 5 batch tests: ETF rotation, vol filter, walk-forward, weekly rebalancing, gradient stop.
+
+### Deployment Configuration
+- `backtest_state_machine_live.py` — Production-config backtest with round lots and ATR stops.
+- `deploy_config_sweep.py` — Rapid parameter sweep for live deployment.
+
+### Research Precursors
+- `bull_trap_analysis.py` — Foundation discovery: 72 CSI300 breakouts, 24% true. Motivated asymmetric confirmation.
+- `delayed_confirm_backtest.py` — Precursor: N-day confirmation window. Led to the state machine design.
+
+Result summary: The V1 state machine (ADX=25, BR=45%, N_BR=5, N_RB=2) achieves Test CAGR=+7.0%, MaxDD=-5.1%, Sharpe=0.787 (2022-2025). Market timing contributes ~21% of CAGR (risk control), stock-selection alpha contributes ~79% (profit engine). The pure CSI300-weight timing alone produces +1.5% CAGR — timing's value is entirely in MaxDD reduction (from -30.6% to -5.1%).
 
 ## Known Limitations (Honest Assessment)
 
@@ -200,3 +248,28 @@ python -m quanti.main_live
 - **pyproject.toml is the single source of tool config**: ruff, black, isort, mypy, pytest, and coverage settings live in `pyproject.toml`. Do not create separate config files (setup.cfg, .flake8, etc.).
 - **Standalone research scripts are intentionally self-contained**: Scripts like `backtest_hybrid_strategies.py` and `exploratory_strategies.py` duplicate indicator logic from `quanti/indicators.py`. This is by design -- they are research artifacts that must remain runnable without the quanti package on sys.path. If a strategy idea proves successful, integrate it into `quanti/strategy/` and use the shared indicator module there.
 - **main_live.py and main_paper.py share EngineRunner**: Both entry points are thin ~25-line configs that delegate to `quanti/execution/engine_runner.py`. The live path's `_on_live_order` callback is still a Phase 5 TODO (no real broker integration). Paper mode simulates fills against last bar close.
+
+## State Machine Strategy — Research Findings (2026-06-14)
+
+### Configuration (v1_best from 81-param grid search)
+- ADX threshold = 25, breadth bull = 45%, N_BR = 5 days, N_RB = 2 days
+- BULL: Top-5 momentum stocks, full position. RANGE: Top-3, half position. BEAR: 100% 511880 money market ETF.
+- Monthly rebalancing, -10% HWM trailing stop, 0.025% one-way commission.
+
+### Core Findings
+1. **Timing does not create returns, it controls drawdowns.** Pure CSI300-weight timing produces +1.5% CAGR. The strategy's +7.0% CAGR comes from momentum stock selection. Timing's sole contribution: reducing MaxDD from -30.6% (pure stock alpha) to -5.1%.
+2. **Asymmetric confirmation works.** Entry-slow (5-day bear-to-range, 2-day range-to-bull) + exit-fast (immediate) filtration. Full-series vs causal state machine: 3292 trading days, 81 param combos, 0 mismatches.
+3. **BULL months are the entire profit engine.** 4 BULL months in Test (8% of time) contributed ~67% of total alpha. 100% win rate in BULL months. RANGE months (13) produced negligible alpha. BEAR months (31, 65% of time) held cash.
+4. **Momentum stock rotation frequency is very high in A-shares.** Top-5 stocks rarely persist for consecutive months. This killed the Martingale accumulation strategy (93% idle cash). Equal-weight monthly rebalancing is the correct approach.
+5. **Incremental risk controls are harmful.** DD circuit breakers, vol targeting, ATR stops, gradient stop-losses — all tested, none improved V1. The timing switch itself is the best risk control. Adding layers only increases friction without improving risk-adjusted returns.
+6. **Walk-forward confirms stability.** 7 rolling windows (36mo train, 12mo test), 4/7 positive, optimal params identical in 6/7 windows (ADX=22, BR=45, N_BR=3, N_RB=2).
+7. **Capacity:** ~20M CNY (1% of P10 daily turnover for 5 positions). Survives 50bps slippage. Commission sensitivity: -0.7% CAGR per 10bps.
+
+### Production Module
+`quanti/strategy/state_machine.py` contains:
+- `DailyStateMachine` — incrementally buildable, `update()` returns confirmed state each day
+- `score_stock()` — composite momentum-trend-lowvol scoring function
+- `LiveSignal` dataclass + `to_json()` — JSON output for execution system consumption
+
+### Verified Absence of Lookahead Bias
+9-step audit: MA120 (full vs causal: identical), ADX (identical), breadth MA20 (identical), data_at window (correctly bounded), state confirmation (backward-looking only), price_on (uses today's close — industry convention, covered by 0.025% comm), stock pool (minor survivorship bias, non-qualifying stocks filtered by data_at), 511880 data (clean), full-series vs causal state machine (0/3292 mismatches).

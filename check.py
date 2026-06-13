@@ -59,10 +59,8 @@ def check_compilation() -> None:
     ]:
         files = sorted(PROJECT_ROOT.glob(glob_pat))
 
-        # Known-broken files (pre-existing linter-induced indentation bugs,
-        # not caused by any change in this session). Excluded so the gate
-        # catches regressions in working files.
-        _KNOWN_BROKEN = {"scripts/backtest_hybrid_v2.py"}
+        # Known-broken files excluded so the gate catches regressions in working files.
+        _KNOWN_BROKEN: set[str] = set()
 
         good, bad = 0, 0
         for f in files:
@@ -88,12 +86,28 @@ def check_compilation() -> None:
 # 2. Import check (_research_helpers from project root)
 # ─────────────────────────────────────────────────────────────
 
-RESEARCH_SCRIPTS = [
-    "scripts.backtest_alt_strategies",
+RESEARCH_SCRIPTS: list[str] = []  # No legacy research scripts remain — all deleted
+
+OLD_SCRIPTS_DELETED = [
     "scripts.backtest_enhanced",
     "scripts.deep_review",
     "scripts.exploratory_strategies",
     "scripts.gold_and_oversold",
+    "scripts.backtest_hybrid_strategies",
+    "scripts.backtest_hybrid_v2",
+    "scripts.strategies_enhanced",
+    "scripts.run_complete_backtest",
+    "scripts.param_grid_search",
+    "scripts.strategy_fix_validate",
+    "scripts.phase3_minimal",
+    "scripts.phase3_train_val_test",
+    "scripts.phase3_v2_backtest",
+    "scripts.phase3_anti_bulltrap",
+    "scripts.phase3_market_timing",
+    "scripts.asset_rotation_v2",
+    "scripts.asset_rotation_v3",
+    "scripts.asset_rotation_v4",
+    "scripts.asset_rotation_v6",
 ]
 
 
@@ -107,16 +121,15 @@ def check_imports() -> None:
         except Exception as e:
             fail(f"import {mod_name}  ->  {e}")
 
-    # Also verify _research_helpers aliases resolve
-    try:
-        from scripts._research_helpers import (
-            load_etf, load_csi300, filter_period, compute_metrics,
-            fmt_pct, year_metrics,
-            filter_t, flt, metrics, calc_metrics, fmtp, fm, yearly,
-        )
-        ok("_research_helpers aliases (13 symbols)")
-    except Exception as e:
-        fail(f"_research_helpers aliases  ->  {e}")
+    # Verify that OLD_SCRIPTS_DELETED are actually deleted (not importable)
+    for mod_name in OLD_SCRIPTS_DELETED:
+        try:
+            __import__(mod_name)
+            fail(f"{mod_name} should be deleted but is still importable")
+        except ModuleNotFoundError:
+            ok(f"{mod_name} correctly deleted (no module)")
+        except Exception:
+            ok(f"{mod_name} correctly deleted (import failed)")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -177,19 +190,18 @@ def check_agents_md() -> None:
         else:
             ok(f"AGENTS.md removed stale reference to {name}")
 
-    # Check: test count claim matches reality
+    # Check: test file count claim matches reality
     import re
-    m = re.search(r"(\d+)\s+tests\s+across\s+(\d+)\s+files", agents_text)
+    m = re.search(r"(\d+)\s+test files", agents_text)
     if m:
-        claimed_tests = int(m.group(1))
-        claimed_files = int(m.group(2))
+        claimed_files = int(m.group(1))
         if claimed_files == disk["tests"]:
             ok(f"AGENTS.md test file count ({claimed_files}) matches disk")
         else:
             fail(f"AGENTS.md claims {claimed_files} test files, disk has {disk['tests']}")
 
-    # Check: new files are mentioned
-    new_files = ["engine_runner.py", "_research_helpers.py", "deep_failure_analysis.py"]
+    # Check: new modules are documented
+    new_files = ["engine_runner.py", "state_machine.py"]
     for name in new_files:
         if name in agents_text:
             ok(f"AGENTS.md documents new file {name}")

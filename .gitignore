@@ -36,3 +36,6 @@ Desktop.ini
 
 # OMC / Claude
 .omc/
+.claude/
+.coverage
+.ruff_cache/

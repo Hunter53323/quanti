@@ -53,24 +53,11 @@ def main():
     risk_checker = RiskChecker()
 
     all_files = sorted(storage.clean_dir.glob("*.parquet"))
-    stock_codes_all = [p.stem for p in all_files if len(p.stem) == 6
-                       and not p.stem.startswith(("51", "58", "15", "56"))]
-
-    # ── 过滤为沪深300+中证500成分股 ──
-    try:
-        import akshare as ak
-        df300 = ak.index_stock_cons('000300')
-        df500 = ak.index_stock_cons('000905')
-        index_codes = set(df300['品种代码'].tolist()) | set(df500['品种代码'].tolist())
-    except Exception:
-        # 获取失败时退回到全部624只股票
-        logger.warning("Failed to fetch constituent list from akshare, using all stocks")
-        index_codes = set(stock_codes_all)
-
-    stock_codes = [c for c in stock_codes_all if c in index_codes]
-    symbols = stock_codes + [strategy.bond_etf, "510300"]
+    stock_codes = [p.stem for p in all_files if len(p.stem) == 6
+                   and not p.stem.startswith(("51", "58", "15", "56"))]
+    symbols = stock_codes + [strategy.bond_etf, strategy.gold_etf, "510300"]
     strategy._stock_universe = set(stock_codes)
-    logger.info(f"Universe: {len(symbols)} symbols ({len(stock_codes)} stocks, CSI300+CSI500 constituents)")
+    logger.info(f"Universe: {len(symbols)} symbols ({len(stock_codes)} stocks)")
 
     recovered = recover_portfolio(journal)
     cash = recovered["cash"]

@@ -226,7 +226,8 @@ class DelayedConfirmStrategy(BaseStrategy):
         vols=np.array([b.volume for b in bars],dtype=np.float64)
         cnt=0
         m120=self._sma(closes,120)
-        if m120 is not None and not np.isnan(m120[-1]) and closes[-1]>m120[-1]: cnt+=1
+        above = m120 is not None and not np.isnan(m120[-1]) and closes[-1]>m120[-1]
+        if above: cnt+=1
         rh=np.max(highs[-20:]); ph=np.max(highs[-60:-20])
         rl=np.min(lows[-20:]); pl=np.min(lows[-60:-20])
         if rh>ph and rl>pl: cnt+=1
@@ -235,10 +236,11 @@ class DelayedConfirmStrategy(BaseStrategy):
             not np.isnan(m20[-1]) and not np.isnan(m60[-1]) and
             not np.isnan(m120[-1]) and m20[-1]>m60[-1]>m120[-1]): cnt+=1
         ax=self._adx(highs,lows,closes,14)
-        if ax is not None and not np.isnan(ax[-1]) and ax[-1]>25: cnt+=1
+        adx_ok = ax is not None and not np.isnan(ax[-1]) and ax[-1]>25
+        if adx_ok: cnt+=1
         v20=np.mean(vols[-21:-1])
         if v20>0 and vols[-1]>v20*1.2: cnt+=1
-        return (cnt>=self.min_trend_score and cnt>=1),cnt
+        return (above and adx_ok and cnt>=self.min_trend_score),cnt
 
     def _trend_strength_score(self,bars):
         closes=np.array([b.close for b in bars],dtype=np.float64)

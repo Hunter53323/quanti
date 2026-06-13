@@ -252,7 +252,7 @@ def run_bond_rotate_decay(state_map, tc, stock_data, all_dates, bond_cl, start, 
         eq.append(total)
     return metrics(eq)
 
-def run_sharp_decay(state_map, tc, stock_data, all_dates, bond_cl, start, end, decay_fn, csi_ret5_arr, csi_idx_map, sharp_threshold=-0.03):
+def run_sharp_decay(state_map, tc, stock_data, all_dates, bond_cl, start, end, decay_fn, csi_ret5_arr, csi_idx_map):
     rebal = monthly_dates(all_dates, start, end)
     cash = CAPITAL; holdings = {}; bu = 0; eq = [cash]; max_eq = cash; dd_active = False
     months_in_cycle = 0; prev_mst = 0; genuine_prev = 0; sharp_cd = -1
@@ -262,7 +262,7 @@ def run_sharp_decay(state_map, tc, stock_data, all_dates, bond_cl, start, end, d
         sharp_fired = False
         if ci is not None and ci >= 5 and ci < len(csi_ret5_arr) and len(holdings) > 0:
             r5 = csi_ret5_arr[ci]
-            if not np.isnan(r5) and r5 < sharp_threshold: sharp_fired = True
+            if not np.isnan(r5) and r5 < -0.03: sharp_fired = True
         if sharp_fired:
             for sym in list(holdings.keys()):
                 cash += holdings[sym]["qty"] * holdings[sym]["price"] * (1-COMM); del holdings[sym]
@@ -332,79 +332,6 @@ def run_sharp_decay(state_map, tc, stock_data, all_dates, bond_cl, start, end, d
         eq.append(total)
     return metrics(eq)
 
-def run_gold_decay(state_map, tc, stock_data, all_dates, bond_cl, gold_cl, start, end, decay_fn,
-                    bond_pct=0.80, gold_pct=0.20):
-    """BOND_ROTATE + bond/gold defensive. bond_pct+gold_pct should equal 1.0."""
-    rebal = monthly_dates(all_dates, start, end)
-    cash = CAPITAL; holdings = {}; bu = 0; gu = 0; eq = [cash]; max_eq = cash; dd_active = False
-    months_in_cycle = 0; prev_mst = 0
-    for rd in rebal:
-        mst = state_map.get(rd, 0)
-        if mst in (2, 4):
-            if prev_mst not in (2, 4): months_in_cycle = 1
-            else: months_in_cycle += 1
-        else: months_in_cycle = 0
-        prev_mst = mst
-        base_sm = 1.0 if mst == 2 else (0.5 if mst == 4 else 0.0)
-        sm = base_sm * decay_fn(months_in_cycle)
-        bp = bond_cl.get(rd); gp = gold_cl.get(rd)
-        if sm > 0 and bu > 0 and bp: cash += bu * bp * (1-COMM); bu = 0
-        if sm > 0 and gu > 0 and gp: cash += gu * gp * (1-COMM); gu = 0
-        for sym in list(holdings.keys()):
-            p = price_on(sym, rd, stock_data)
-            if p is None or p < 0.01: cash += holdings[sym]["val"] * 0.7; del holdings[sym]; continue
-            holdings[sym]["price"] = p; holdings[sym]["val"] = holdings[sym]["qty"] * p
-            if "hwm" not in holdings[sym] or p > holdings[sym]["hwm"]: holdings[sym]["hwm"] = p
-            if holdings[sym]["hwm"] > 0 and (p / holdings[sym]["hwm"] - 1) * 100 < STOP_PCT:
-                cash += holdings[sym]["val"] * (1-COMM); del holdings[sym]
-        total = cash + sum(h["qty"] * h["price"] for h in holdings.values()) + bu * (bp or 1.0) + gu * (gp or 1.0)
-        if total > max_eq: max_eq = total
-        dd = (max_eq - total) / max_eq * 100 if max_eq > 0 else 0
-        if dd > DD_EXIT_PCT:
-            for sym in list(holdings.keys()):
-                cash += holdings[sym]["qty"] * holdings[sym]["price"] * (1-COMM); del holdings[sym]
-            if bu > 0 and bp: cash += bu * bp * (1-COMM); bu = 0
-            if gu > 0 and gp: cash += gu * gp * (1-COMM); gu = 0
-            dd_active = True
-        elif dd_active and total / max_eq > 0.92: dd_active = False
-        if dd_active: eq.append(cash); continue
-        if sm == 0:
-            for sym in list(holdings.keys()):
-                cash += holdings[sym]["qty"] * holdings[sym]["price"] * (1-COMM); del holdings[sym]
-            if cash > 1000:
-                total_cash_for_defensive = cash  # snapshot before any deduction
-                if bp:
-                    buy_b = int(total_cash_for_defensive * bond_pct * 0.99 / bp)
-                    if buy_b > 0: bu += buy_b; cash -= buy_b * bp * (1+COMM)
-                if gp:
-                    buy_g = int(total_cash_for_defensive * gold_pct * 0.99 / gp)
-                    if buy_g > 0: gu += buy_g; cash -= buy_g * gp * (1+COMM)
-            eq.append(cash + bu * (bp or 1.0) + gu * (gp or 1.0)); continue
-        trending = tc.get(rd, [])
-        if not trending: eq.append(cash + sum(h["qty"] * h["price"] for h in holdings.values()) + bu * (bp or 1.0) + gu * (gp or 1.0)); continue
-        selected = {t[0] for t in trending[:TOP_N]}
-        for sym in list(holdings.keys()):
-            if sym not in selected:
-                cash += holdings[sym]["qty"] * holdings[sym]["price"] * (1-COMM); del holdings[sym]
-        n_pos = max(len(selected), 1); per = total * sm / n_pos * 0.90
-        for sym in selected:
-            p = price_on(sym, rd, stock_data)
-            if p is None or p < 0.01: continue
-            tq = int(per / p / 100) * 100
-            if tq < 100: continue
-            if sym in holdings:
-                diff = tq - holdings[sym]["qty"]
-                if abs(diff) >= 100:
-                    cost = abs(diff) * p
-                    if diff > 0 and cash >= cost * (1+COMM): cash -= cost * (1+COMM); holdings[sym]["qty"] = tq
-                    elif diff < 0: cash += cost * (1-COMM); holdings[sym]["qty"] = tq
-            else:
-                cost = tq * p
-                if cash >= cost * (1+COMM): cash -= cost * (1+COMM); holdings[sym] = {"qty": tq, "price": p, "val": cost, "hwm": p}
-        total = cash + sum(h["qty"] * h["price"] for h in holdings.values()) + bu * (bp or 1.0) + gu * (gp or 1.0)
-        eq.append(total)
-    return metrics(eq)
-
 def verify_nm():
     storage = DataStorage()
     raw = storage.load_bars("510300")
@@ -413,8 +340,6 @@ def verify_nm():
     cv = np.array([r.volume for r in raw], dtype=np.float64)
     raw_b = storage.load_bars("511880")
     bond_cl = {r.trade_date: float(r.close) for r in raw_b} if raw_b else {}
-    raw_g = storage.load_bars("518880")
-    gold_cl = {r.trade_date: float(r.close) for r in raw_g} if raw_g else {}
     all_f = sorted(storage.clean_dir.glob("*.parquet"))
     codes = [p.stem for p in all_f if len(p.stem) == 6 and not p.stem.startswith(("51", "58", "15", "56"))]
     stock_data = {}; all_ds = set()
@@ -480,8 +405,6 @@ if __name__ == "__main__":
     csi_idx_map = {str(d): i for i, d in enumerate(csi_dates)}
     raw_b = storage.load_bars("511880")
     bond_cl = {r.trade_date: float(r.close) for r in raw_b} if raw_b else {}
-    raw_g = storage.load_bars("518880")
-    gold_cl = {r.trade_date: float(r.close) for r in raw_g} if raw_g else {}
     all_f = sorted(storage.clean_dir.glob("*.parquet"))
     codes = [p.stem for p in all_f if len(p.stem) == 6 and not p.stem.startswith(("51", "58", "15", "56"))]
     stock_data = {}; all_ds = set()
@@ -526,9 +449,6 @@ if __name__ == "__main__":
     s43_te = run_sharp_decay(sm_all, tc_test,  stock_data, all_dates, bond_cl, TEST_START,  TEST_END, a43_fn, csi_ret5, csi_idx_map)
     s0_tr = run_sharp_decay(sm_all, tc_train, stock_data, all_dates, bond_cl, TRAIN_START, TRAIN_END, noop_fn, csi_ret5, csi_idx_map)
     s0_te = run_sharp_decay(sm_all, tc_test,  stock_data, all_dates, bond_cl, TEST_START,  TEST_END, noop_fn, csi_ret5, csi_idx_map)
-    # Gold overlay (80% bond + 20% gold in defensive)
-    g43_tr = run_gold_decay(sm_all, tc_train, stock_data, all_dates, bond_cl, gold_cl, TRAIN_START, TRAIN_END, a43_fn)
-    g43_te = run_gold_decay(sm_all, tc_test,  stock_data, all_dates, bond_cl, gold_cl, TEST_START,  TEST_END, a43_fn)
     print(f"\n{'='*100}")
     print("FINAL RESULTS")
     print(f"{'='*100}")
@@ -540,12 +460,10 @@ if __name__ == "__main__":
         ("+ A43 decay",                         br43_tr, br43_te),
         ("+ Sharp3pct exit (no decay)",         s0_tr, s0_te),
         ("+ Sharp3pct + A43",                   s43_tr, s43_te),
-        ("+ A43 + Gold (80/20)",                g43_tr, g43_te),
     ]:
         print(f"{name:<40s} | {tr['cagr']:+7.2f}% {tr['sharpe']:6.3f} {tr['maxdd']:5.1f}% | {te['cagr']:+7.2f}% {te['sharpe']:6.3f} {te['maxdd']:5.1f}%")
     print(f"\nDelta over BOND_ROTATE entry-only (Test CAGR):")
     print(f"  +A43 decay:              {br43_te['cagr']-br_te['cagr']:+.2f}%")
     print(f"  +Sharp3pct exit:         {s0_te['cagr']-br_te['cagr']:+.2f}%")
     print(f"  +Sharp3pct + A43:        {s43_te['cagr']-br_te['cagr']:+.2f}%")
-    print(f"  +A43+Gold (80/20):       {g43_te['cagr']-br_te['cagr']:+.2f}%")
     print(f"\nDone in {time.time()-t0:.0f}s")

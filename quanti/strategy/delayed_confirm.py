@@ -1,9 +1,11 @@
 """
-Delayed Confirmation Strategy (production grade, Gold + Bond + Sharp3pct merged).
+Delayed Confirmation Strategy (production grade).
 
 State machine on daily CSI300: 0=defensive, 2=full stocks, 4=half stocks.
-Full stack: N=5/M=40 + 60MA half-tier + Sharp3pct exit + A43 decay + bond/gold defensive.
-All params independently verified (run_backtest.py --verify, --check-vtmd).
+Full stack: N=5/M=40 confirm + 60MA half-tier + Sharp3pct exit + A43 decay
+            + 511880 bond defensive allocation.
+
+All parameters independently verified (run_backtest.py --verify, --check-vtmd).
 """
 import numpy as np
 from quanti.config import settings
@@ -14,21 +16,22 @@ from quanti.types import Bar, MarketData, Order, OrderSide, Portfolio, Position,
 DECAY_SCHEDULES = {"none": lambda m: 1.0, "A43": lambda m: 1.0 if m<=4 else (0.75 if m<=8 else 0.50)}
 
 class DelayedConfirmStrategy(BaseStrategy):
+    """All verified: confirm + 60MA half + Sharp exit + A43 decay + bond defensive."""
+
     name = "delayed_confirm"
 
     def __init__(self, confirm_days=5, cooldown_days=40, top_n=5, stop_loss_pct=-10.0,
                  min_trend_score=3, dd_exit_pct=15.0, stock_universe=None,
                  decay_schedule="A43", use_sharp_exit=True, sharp_threshold=-0.03,
-                 bond_etf="511880", gold_etf="518880",
-                 defensive_bond_pct=0.80, defensive_gold_pct=0.20):
+                 bond_etf="511880"):
         self.confirm_days=confirm_days; self.cooldown_days=cooldown_days
         self.top_n=top_n; self.stop_loss_pct=stop_loss_pct
         self.min_trend_score=min_trend_score; self.dd_exit_pct=dd_exit_pct
         self.decay_schedule=decay_schedule
-        self._decay_fn=DECAY_SCHEDULES.get(decay_schedule,DECAY_SCHEDULES["A43"])
+        self._decay_fn=DECAY_SCHEDULES.get(decay_schedule, DECAY_SCHEDULES["A43"])
         self.use_sharp_exit=use_sharp_exit; self.sharp_threshold=sharp_threshold
-        self.bond_etf=bond_etf; self.gold_etf=gold_etf
-        self.defensive_bond_pct=defensive_bond_pct; self.defensive_gold_pct=defensive_gold_pct
+        self.bond_etf=bond_etf
+
         self._hwm={}; self._max_equity=0.0; self._dd_exit_active=False; self._dd_exit_days=0
         self._market_state={}; self._csi_ret5={}; self._csi_bar_index={}
         self._csi300_bars_loaded=False; self._sharp_cd=-1; self._sharp_fired_recent=False
@@ -36,12 +39,11 @@ class DelayedConfirmStrategy(BaseStrategy):
         self._months_in_cycle=0; self._prev_entry_state=-1; self._genuine_prev=-1
         self._stock_universe=set(stock_universe) if stock_universe else None
 
-    def generate_signals(self, md: MarketData)->list[Signal]:
+    def generate_signals(self, md: MarketData) -> list[Signal]:
         sigs=[]
         if not md.bars: return sigs
         if not self._csi300_bars_loaded: self._build_market_state(md)
         td=md.timestamp.strftime("%Y%m%d"); mst=self._market_state.get(td,0)
-        self._sharp_fired_recent=False
         if td[:6]==self._last_rebalance_month: return sigs
         self._last_rebalance_month=td[:6]
         ci=self._csi_bar_index.get(td,-1)
@@ -73,14 +75,14 @@ class DelayedConfirmStrategy(BaseStrategy):
                     strength=round(min(sc/100.0*sz,1.0),4),
                     reason=f"ENTRY st={emst} sc={sc:.0f} dec={self._decay_fn(self._months_in_cycle):.0%} mo={self._months_in_cycle}"))
             sigs.append(Signal(symbol=self.bond_etf,side=OrderSide.SELL,strength=1.0,reason="ENTRY:sell bonds"))
-            sigs.append(Signal(symbol=self.gold_etf,side=OrderSide.SELL,strength=1.0,reason="ENTRY:sell gold"))
         else:
             sigs.append(Signal(symbol=self.bond_etf,side=OrderSide.BUY,strength=1.0,reason=f"DEF st={emst}"))
-            sigs.append(Signal(symbol=self.gold_etf,side=OrderSide.BUY,strength=1.0,reason=f"DEF st={emst}"))
         return sigs
 
-    def size_positions(self,signals,capital,pf,md=None):
-        odrs=[]; buys=[s for s in signals if s.side==OrderSide.BUY]; sells=[s for s in signals if s.side==OrderSide.SELL]
+    def size_positions(self,signals,capital,pf,market_data=None):
+        md=market_data; odrs=[]
+        buys=[s for s in signals if s.side==OrderSide.BUY]
+        sells=[s for s in signals if s.side==OrderSide.SELL]
         td_str=""
         if md: td_str=md.timestamp.strftime("%Y%m%d"); mst=self._market_state.get(td_str,0)
         else: mst=0
@@ -88,18 +90,22 @@ class DelayedConfirmStrategy(BaseStrategy):
         emst=0 if (ci>=0 and ci<self._sharp_cd) else mst
         bm=1.0 if emst==2 else (0.5 if emst==4 else 0.0)
         dm=self._decay_fn(self._months_in_cycle) if self._months_in_cycle>0 else 1.0; sz=bm*dm
-        sb=[s for s in buys if s.symbol not in (self.bond_etf,self.gold_etf)]
-        bb=[s for s in buys if s.symbol==self.bond_etf]; gb=[s for s in buys if s.symbol==self.gold_etf]
-        bs=[s for s in sells if s.symbol==self.bond_etf]; gs=[s for s in sells if s.symbol==self.gold_etf]
+        sb=[s for s in buys if s.symbol!=self.bond_etf]
+        bb=[s for s in buys if s.symbol==self.bond_etf]
+        bs=[s for s in sells if s.symbol==self.bond_etf]
         ss={s.symbol for s in sb}
+        sharp_sold = set()
         if self._sharp_fired_recent:
             for sym,pos in pf.positions.items():
-                if sym in (self.bond_etf,self.gold_etf) or pos.quantity<=0: continue
+                if sym==self.bond_etf or pos.quantity<=0: continue
                 odrs.append(Order(symbol=sym,side=OrderSide.SELL,quantity=pos.quantity,price=None,order_type="market",signal_ref=f"Sharp exit:{sym}"))
+                sharp_sold.add(sym)
             self._sharp_fired_recent=False
         for sym,pos in pf.positions.items():
-            if sym in (self.bond_etf,self.gold_etf) or pos.quantity<=0: continue
+            if sym==self.bond_etf or pos.quantity<=0 or sym in sharp_sold: continue
             sell=False; reason=""
+            # In defense state, ss (selected_syms) is empty → all stocks get sold here.
+            # This is the *only* place defense liquidation happens — no explicit SELL signals.
             if sym not in ss: sell=True; reason=f"Rotated(st={emst})"
             elif sym in self._hwm and pos.current_price>0:
                 loss=(pos.current_price/self._hwm[sym]-1)*100
@@ -120,20 +126,13 @@ class DelayedConfirmStrategy(BaseStrategy):
         for sig in bb:
             bpx=self._get_price(self.bond_etf,pf,md)
             if bpx and bpx>0.01 and capital>1000:
-                q=int(capital*self.defensive_bond_pct*0.99/bpx)
+                q=int(capital*0.99/bpx)
                 if q>0: odrs.append(Order(symbol=self.bond_etf,side=OrderSide.BUY,quantity=q,price=bpx,order_type="limit",signal_ref=sig.reason))
-        gp_pos=pf.positions.get(self.gold_etf); gu_units=gp_pos.quantity if gp_pos else 0
-        for sig in gs:
-            if gu_units>0: odrs.append(Order(symbol=self.gold_etf,side=OrderSide.SELL,quantity=gu_units,price=None,order_type="market",signal_ref=sig.reason))
-        for sig in gb:
-            gpx=self._get_price(self.gold_etf,pf,md)
-            if gpx and gpx>0.01 and capital>1000:
-                q=int(capital*self.defensive_gold_pct*0.99/gpx)
-                if q>0: odrs.append(Order(symbol=self.gold_etf,side=OrderSide.BUY,quantity=q,price=gpx,order_type="limit",signal_ref=sig.reason))
         return odrs
 
-    def risk_check(self,odrs,pf,md=None,rk=None):
-        appr=[]; tv=pf.cash+sum(p.quantity*p.current_price for p in pf.positions.values())
+    def risk_check(self,odrs,pf,market_data=None,risk_checker=None):
+        md=market_data; appr=[]
+        tv=pf.cash+sum(p.quantity*p.current_price for p in pf.positions.values())
         if tv>self._max_equity: self._max_equity=tv; self._dd_exit_active=False
         if self._max_equity>0 and self.dd_exit_pct>0:
             dd=(self._max_equity-tv)/self._max_equity*100
@@ -149,7 +148,7 @@ class DelayedConfirmStrategy(BaseStrategy):
                 if pos.quantity>0: appr.append(Order(symbol=sym,side=OrderSide.SELL,quantity=pos.quantity,price=None,order_type="market",signal_ref=f"DD breaker:-{dd:.1f}%"))
             return appr
         for sym,pos in pf.positions.items():
-            if sym in (self.bond_etf,self.gold_etf): continue
+            if sym==self.bond_etf: continue
             if sym not in self._hwm or pos.current_price>self._hwm[sym]: self._hwm[sym]=pos.current_price
             if pos.current_price>0 and self._hwm.get(sym,0)>0:
                 lp=(pos.current_price/self._hwm[sym]-1)*100
@@ -203,7 +202,7 @@ class DelayedConfirmStrategy(BaseStrategy):
     def _score_stocks(self,md):
         tr=[]
         for sym,bars in md.bars.items():
-            if sym in (self.bond_etf,self.gold_etf): continue
+            if sym==self.bond_etf: continue
             if self._stock_universe and sym not in self._stock_universe: continue
             if len(bars)<200: continue
             it,cc=self._is_stock_trending(bars)
@@ -243,8 +242,7 @@ class DelayedConfirmStrategy(BaseStrategy):
             m3=min(max(r3/0.5,0),1) if r3>0 else 0; m6=min(max(r6/0.8,0),1) if r6>0 else 0
             ms=(0.5*m3+0.5*m6)*100
         if len(closes)>=61:
-            w=closes[-61:]; dr=np.diff(w)/(w[:-1]+1e-10)
-            vs=max(0,(1-min(np.nanstd(dr)/0.04,1)))*100
+            w=closes[-61:]; dr=np.diff(w)/(w[:-1]+1e-10); vs=max(0,(1-min(np.nanstd(dr)/0.04,1)))*100
         else: vs=50.0
         return 0.6*ms+0.4*vs
 

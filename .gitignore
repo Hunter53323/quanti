@@ -39,3 +39,5 @@ Desktop.ini
 .claude/
 .coverage
 .ruff_cache/
+data/signal_log.jsonl
+data/reports/

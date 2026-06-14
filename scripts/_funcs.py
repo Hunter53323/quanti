@@ -7,6 +7,7 @@ POOL = ("510300","510500","159915","510880","518880","511880")
 POOL_V6 = POOL + ("511010",)
 CASH = "511880"
 GOLD = "518880"
+T0, T1 = "2022-01-01", "2025-12-31"
 P = dict(tn=2, wm=0.35, wa=0.40, wr=0.25, th=0.35, vt=0.14)
 MACRO_DIR = os.path.normpath(os.path.join(DIR, "..", "macro"))
 
@@ -90,6 +91,29 @@ def _safe_roc(close, lookback):
     try:   return float(close.iloc[-1] / close.iloc[-lookback] - 1)
     except: return 0.0
 
+def compute_gold_cap(gold_close, regime_ma, regime_cap, roc_63=None):
+    """Returns min(regime_cap, trend_state_cap). Plan Section 4.3.
+    Uses regime-adjusted MA (not fixed 50). Bear=0%, Neutral=25%, Strong=40%."""
+    if len(gold_close) < max(regime_ma + 1, 63):
+        return 0.0
+    c = gold_close.iloc[-1]
+    ma = gold_close.rolling(regime_ma).mean().iloc[-1]
+    if pd.isna(ma):
+        return 0.0
+    if c < ma:
+        trend_state_cap = 0.0
+    else:
+        roc = roc_63 if roc_63 is not None else _safe_roc(gold_close, 63)
+        # MA slope from last 2 values
+        mas = gold_close.rolling(regime_ma).mean()
+        slope = mas.iloc[-1] - mas.iloc[-2] if len(mas) >= 2 else 0
+        slope = 0 if pd.isna(slope) else slope
+        if slope > 0 and roc > 0.05:
+            trend_state_cap = 0.40
+        else:
+            trend_state_cap = 0.25
+    return min(regime_cap, trend_state_cap)
+
 def _cross_z(values):
     arr = np.array(values, dtype=float)
     mn, sd = np.nanmean(arr), np.nanstd(arr)
@@ -99,7 +123,8 @@ def _cross_z(values):
 
 # ═══════════════════════  v6 scoring  ═══════════════════════
 
-def compute_v6_score_hybrid(data_dict, regime_params, date, accel_smooth=5):
+def compute_v6_score_hybrid(data_dict, regime_params, date, accel_smooth=5,
+                            gold_boost_config=None):
     mp = regime_params.get("ma_period", 40)
     wt = regime_params.get("w_trend",  0.40)
     wa = regime_params.get("w_adx",    0.30)
@@ -138,7 +163,10 @@ def compute_v6_score_hybrid(data_dict, regime_params, date, accel_smooth=5):
                         adx_z=r["adx_lfmm"], mom_z=mz[i], accel_z=az[i], vol_penalty=vp))
     result = pd.DataFrame(rows)
     if rn in ("R0","R3"):
-        boost = {"R0":0.10, "R3":0.25}.get(rn, 0.0)
+        if gold_boost_config is not None and rn in gold_boost_config:
+            boost = gold_boost_config[rn]
+        else:
+            boost = {"R0":0.10, "R3":0.25}.get(rn, 0.0)
         result.loc[result["etf"]==GOLD, "final_score"] += boost
     return result
 
@@ -208,7 +236,7 @@ def _alloc(amt, sel, vols, vt):
     if eq < amt:  h[CASH] = amt - eq
     return h
 
-def backtest_v6(data, start, end, tn=2, vt=0.28, score_gate_threshold=0.60,
+def backtest_v6(data, start, end, tn=2, vt=0.15, score_gate_threshold=0.60,
                 gold_boost_config=None, regime_weight_override=None,
                 accel_smooth=5, dd_enabled=True, scoring_func=None,
                 pmi_data=None, cgb_yield_data=None):
@@ -253,19 +281,22 @@ def backtest_v6(data, start, end, tn=2, vt=0.28, score_gate_threshold=0.60,
                     if len(ma10) >= 10 and pt.iloc[-1] > ma10.iloc[-1]:
                         can = True;  break
             if can and curdd > -0.15:  in_dd = False;  hh, hi = {}, {}
-        pv_ = None
+        pmi_val = None
         if pmi_data is not None and len(pmi_data) > 0:
             mask = pmi_data.index <= d
-            if mask.any():  pv_ = float(pmi_data.loc[mask].iloc[-1])
+            if mask.any():  pmi_val = float(pmi_data.loc[mask].iloc[-1])
         rn, rp, pyr, ppc, pms, lpm = compute_regime(
-            pv_, cgb_yield_data, d, prev_yield_rising=pyr,
+            pmi_val, cgb_yield_data, d, prev_yield_rising=pyr,
             prev_pmi_contraction=ppc, pmi_streak=pms, last_pmi_month=lpm)
         if regime_weight_override and rn in regime_weight_override:
             for k, v in regime_weight_override[rn].items():
                 rp[k] = v
         inm = (i == 0 or d.month != dr[i-1].month);  gt = False
         if inm and not in_dd:
-            sdf = scoring_func(data, rp, d, accel_smooth=accel_smooth)
+            score_kwargs = {"accel_smooth": accel_smooth}
+            if gold_boost_config is not None:
+                score_kwargs["gold_boost_config"] = gold_boost_config
+            sdf = scoring_func(data, rp, d, **score_kwargs)
             if not sdf.empty:
                 top = sdf.nlargest(tn, "final_score")
                 if top["final_score"].max() < score_gate_threshold:
@@ -387,53 +418,72 @@ def year_bt(results, year):
     return dict(year=year, return_=tr, volatility=vol, max_drawdown=dd,
                 sharpe=(tr/vol if vol>0 else 0))
 
-def backtest(data, start, end, mf="monthly", ddcb=False,
+def backtest(data, start, end, ef=None, mf=False, ddcb=0.0,
              tn=None, th=None, vt=None, wm=None, wa=None, wr=None):
+    """v4 backtest (backward compat — ef/mf/ddcb params must remain)."""
     tn = tn or P["tn"];  th = th or P["th"];  vt = vt or P["vt"]
     wm = wm or P["wm"];  wa = wa or P["wa"];  wr = wr or P["wr"]
     scores = scores_dict(data, wm, wa, wr)
     dr = pd.DatetimeIndex(sorted(set().union(*[s.index for s in scores.values()])))
-    dr = dr[(dr >= start) & (dr <= end)]
-    etfs = list(data.keys());  M = _mat(scores, dr, etfs)
-    cash_df = data[CASH].loc[(data[CASH].index >= start) & (data[CASH].index <= end)]
-    rd = _rb(dr) if mf == "monthly" else dr
-    port = [];  hlog = {};  amt = 1.0;  last = None;  peak = 1.0;  dd_active = False
-    for d in dr:
-        if last is None:  pv = amt
+    dr = dr[(dr >= pd.Timestamp(start)) & (dr <= pd.Timestamp(end))]
+    etfs = list(data.keys())
+    M = _mat(scores, dr, etfs)
+    rd = _rb(dr)
+    cash_s = data[CASH].loc[(data[CASH].index >= pd.Timestamp(start)) & (data[CASH].index <= pd.Timestamp(end))]
+    port = [];  hlog = {};  peak = 1.0;  last = None
+    for i, d in enumerate(dr):
+        if i == 0:  hlog[d] = {CASH: 1.0};  pv = 1.0
         else:
-            pv = 0.0;  hl = hlog.get(last, {})
+            pv = 0.0;  hl = hlog.get(last, list(hlog.values())[0])
             for e, sh in hl.items():
                 if e == CASH:  pv += float(sh)
-                else:
-                    px = float(_px(e, d, M, cash_df))
-                    hi = max(float(hinit.get(e, 1.0)), 1e-6)
-                    pv += float(sh) * px / hi
-        peak = max(peak, pv);  curdd = pv / peak - 1
-        if ddcb and curdd < -0.25 and not dd_active:
-            dd_active = True;  hlog[d] = {CASH: pv};  last = d
-            port.append({"date": d, "portfolio_value": pv, "daily_return": 0.0, "drawdown": curdd})
-            continue
-        if dd_active and curdd >= -0.15:  dd_active = False
-        if d in rd and not dd_active:
-            sel = M["score"].loc[d].nlargest(tn)
-            if (sel <= 0).all():  hlog[d] = {CASH: pv}
+                else:  pv += float(sh) * float(_px(e, d, M, cash_s))
+        peak = max(peak, pv)
+        if d in rd and i > 0:
+            curdd = pv/peak-1 if peak>0 else 0
+            if ddcb<0 and curdd<=ddcb:  hlog[d] = {CASH: pv}
             else:
-                vols = M["vol"].loc[d, sel.index]
-                hlog[d] = _alloc(pv, sel, vols, vt)
+                sc = M["score"].loc[d].copy()
+                if mf:  sc[M["r60"].loc[d]<=0] = 0
+                if ef:
+                    for etf in etfs:
+                        if etf in sc.index and M[ef].loc[d,etf]<0.5:  sc[etf]=0
+                sc = sc.dropna()
+                if len(sc)==0 or sc.max()<th:  hlog[d] = {CASH: pv}
+                else:
+                    sel = sc.nlargest(tn);  sel = sel[sel>0]
+                    if len(sel)==0:  hlog[d] = {CASH: pv}
+                    else:
+                        vols = M["vol"].loc[d,sel.index].clip(lower=0.05)
+                        w = (1/vols)/(1/vols).sum()
+                        pvol = np.sqrt((w*vols).pow(2).sum())
+                        lev = min(1.0, vt/pvol) if pvol>0 else 0;  eq = pv*lev
+                        h = {};  cv = 0.0
+                        for e in sel.index:
+                            if e==CASH:  cv += eq*w[e]
+                            else:  h[e] = eq*w[e]/float(M["close"].loc[d,e])
+                        if eq<pv:  cv += pv-eq
+                        if cv>0:  h[CASH] = cv
+                        hlog[d] = h
             last = d
-            hinit = {k: float(_px(k, d, M, cash_df)) for k in hlog[d] if k != CASH}
-        dr_ = pv / port[-1]["portfolio_value"] - 1 if port and port[-1]["portfolio_value"] > 0 else 0.0
-        port.append({"date": d, "portfolio_value": pv, "daily_return": dr_, "drawdown": curdd})
-    res = pd.DataFrame(port).set_index("date")
-    res["exposure"] = res["portfolio_value"] / res["portfolio_value"].iloc[0]
-    return res
+        pv = 0.0;  hl = hlog.get(last, list(hlog.values())[0])
+        for e, sh in hl.items():
+            if e==CASH:  pv += float(sh)
+            else:  pv += float(sh)*float(_px(e,d,M,cash_s))
+        peak = max(peak,pv);  curdd = pv/peak-1 if peak>0 else 0
+        dr_ = pv/port[-1]["pv"]-1 if port else 0.0
+        held = [e for e in hl if e!=CASH]
+        port.append({"pv":pv,"ret":dr_,"dd":curdd,"exp":len(held)>0,"held":held})
+    res = pd.DataFrame(port, index=dr)
+    return res.rename(columns={"pv":"portfolio_value","ret":"daily_return",
+                               "dd":"drawdown","exp":"exposure","held":"holdings"})
 
 def bench(data, pool=None):
     if pool is None:  pool = POOL
     r = pd.DataFrame({e: data[e]["close"].pct_change() for e in pool}).mean(axis=1)
     return (1 + r).cumprod()
 
-def compute_v6_score(data_dict, regime_params, date, accel_smooth=5):
+def compute_v6_score(data_dict, regime_params, date, accel_smooth=5, **kwargs):
     mp = regime_params.get("ma_period", 40)
     w_trend = regime_params.get("w_trend", 0.25)
     w_adx   = regime_params.get("w_adx",   0.25)
@@ -461,7 +511,7 @@ def compute_v6_score(data_dict, regime_params, date, accel_smooth=5):
     if not rows:  return pd.DataFrame()
     return pd.DataFrame(rows)
 
-def compute_v6_score_cross_sectional(data_dict, regime_params, date, accel_smooth=5):
+def compute_v6_score_cross_sectional(data_dict, regime_params, date, accel_smooth=5, **kwargs):
     mp = regime_params.get("ma_period", 40)
     w_trend = regime_params.get("w_trend", 0.25)
     w_adx   = regime_params.get("w_adx",   0.25)

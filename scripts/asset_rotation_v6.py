@@ -3,7 +3,7 @@ import warnings; warnings.filterwarnings("ignore")
 import pandas as pd; import numpy as np
 from _funcs import (load, metrics, bench, POOL_V6, load_macro, backtest_v6,
     walk_forward, turnover, compute_v6_score, compute_v6_score_cross_sectional,
-    compute_regime, CASH, bench_6040, compute_gold_allocation_mean, REGIME_PARAMS, backtest)
+    compute_regime, CASH, bench_6040, compute_gold_allocation_mean, REGIME_PARAMS, backtest, P)
 
 print("=" * 72)
 print("ETF Rotation v6 -- Integration and Backtest (Phase 4)")
@@ -23,8 +23,9 @@ print(f"  CGB 10Y: {len(cgb) if cgb is not None else 0} records")
 print("=" * 72)
 
 print("[3/6] Walk-Forward Backtest (2015-2025, 3 expanding folds)")
-wp = dict(tn=2, vt=0.28, score_gate_threshold=0.60, accel_smooth=5,
-          gold_boost_config={"R0": 0.10, "R3": 0.25}, dd_enabled=True)
+wp = dict(tn=2, vt=0.15, score_gate_threshold=0.60, accel_smooth=5,
+          gold_boost_config={"R0": 0.10, "R3": 0.25}, dd_enabled=True,
+          regime_weight_override={"R3": {"w_trend": 0.50, "w_mom": 0.10}})
 wf = walk_forward(data, (pmi, cgb), "2015-01-01", "2019-12-31", n_folds=3, fold_years=2, **wp)
 
 print("\n" + "-" * 72)
@@ -101,7 +102,7 @@ print(f"Liquidation events: {len(ul)}  Re-entries: {len(ul)}  Median days: {mday
 print(f"AC-13 (re-entry < 45d): {'PASS' if ac13 else 'FAIL'} ({mdays})")
 
 print("\n--- AC-14: TS vs CS z-score (2017) ---")
-bp = dict(tn=2, vt=0.28, score_gate_threshold=0.60, accel_smooth=5, gold_boost_config={"R0": 0.10, "R3": 0.25}, dd_enabled=True)
+bp = dict(tn=2, vt=0.15, score_gate_threshold=0.60, accel_smooth=5, gold_boost_config={"R0": 0.10, "R3": 0.25}, dd_enabled=True)
 b17t = backtest_v6(data, "2017-01-01", "2017-12-31", pmi_data=pmi, cgb_yield_data=cgb, scoring_func=compute_v6_score, **bp)
 b17c = backtest_v6(data, "2017-01-01", "2017-12-31", pmi_data=pmi, cgb_yield_data=cgb, scoring_func=compute_v6_score_cross_sectional, **bp)
 m17t = metrics(b17t); m17c = metrics(b17c); d17 = m17t["total_return"] - m17c["total_return"]
@@ -126,7 +127,7 @@ print(f"AC-10 (CAGR > 10%): {'PASS' if ac10 else 'FAIL'} ({m2223['annual_return'
 print("\n[6/6] Benchmark Comparison (AC-15 through AC-17)")
 
 print("\n--- AC-15: v6 vs v4 ---")
-dv4 = load(); bv4 = backtest(dv4, "2020-01-01", "2025-12-31")
+dv4 = load(); bv4 = backtest(dv4, "2020-01-01", "2025-12-31", **{k:v for k,v in P.items() if k!='vt'}, vt=P['vt'], ef="rising")
 mv4 = metrics(bv4); svv = oosm["sharpe_ratio"] - mv4["sharpe_ratio"]; ac15 = svv > 0
 print(f"v4 (2020-2025): Sharpe={mv4['sharpe_ratio']:.3f} Ret={mv4['annual_return']:.2%} DD={mv4['max_drawdown']:.2%}")
 print(f"v6 OOS: Sharpe={oosm['sharpe_ratio']:.3f} Ret={oosm['annual_return']:.2%} DD={oosm['max_drawdown']:.2%}")

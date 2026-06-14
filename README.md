@@ -98,6 +98,9 @@ v6_pe_band.py (493 lines, zero strategy imports)
 | `scripts/auto_update.py` | Production pipeline (v4 + v6 signal) |
 | `scripts/fetch_macro.py` | PMI + CGB yield fetcher |
 | `docs/v6_项目总结.md` | Full project summary (Chinese) |
+| `docs/strategy_notes.md` | Failure modes, calibration, design rationale |
+| `docs/risk_engineering.md` | Risk audit — missing variables, edge cases, system risk |
+| `docs/brain_dump.md` | Complete session knowledge dump |
 | `.omc/plans/` | Planning docs, results, journal, open questions |
 
 ## Data

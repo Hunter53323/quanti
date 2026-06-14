@@ -163,6 +163,8 @@ Fixed CSI300 is recommended. Rotation can be revisited if CSI500/ChiNext show pe
 
 These are scenarios the model has never encountered in backtesting. They are not bugs — they are the natural limits of backtesting on 11 years of Chinese ETF data. Every strategy has them. These are ours.
 
+> **For a comprehensive risk analysis** including missing variables, edge cases, untested assumptions, system risk, parameter interaction blind spots, and a prioritized risk register, see `docs/risk_engineering.md`.
+
 ### Never tested
 
 1. **Sustained rising-rate regime** (bonds decline for 2+ years)

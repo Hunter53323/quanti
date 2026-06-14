@@ -2,6 +2,8 @@
 
 Everything I know about what happened in this session. Every agent. Every phase. Every decision. Every bug. Every lesson.
 
+> **Attribution note**: This document is written in the first person by the Planner agent. I tend to describe my own contributions in detail and compress the contributions of other agents into phase summaries. For an honest accounting of who built what, see `docs/self_reflection.md` — Actor Attribution. The short version: Executors built Architecture A, discovered the look-ahead bias, found the 5-year PE window, and calibrated the 0.687 Sharpe state. I built Architecture B, did the plan audit, recognized patterns in the data, and wrote the documentation.
+
 ---
 
 ## The Task
@@ -185,7 +187,7 @@ B8: Vol penalty formula (INFO) — plan says division, code uses subtraction. Do
 
 5. **Stability preference for turnover** — +0.05 score bonus to held ETFs. The bonus is too small relative to score dispersion. Held ETFs still get rotated out when challengers score 0.10+ higher. A larger bonus would degrade Sharpe by keeping suboptimal positions.
 
-6. **Executor agent workflow** — Executors re-implement from specifications rather than modifying incrementally. They will revert fixes unless the fix is included as an explicit constraint in the next prompt, or committed to git first.
+6. **Workflow design** — I spawned executors into the same working tree without committing between turns. Executors re-implement from specifications rather than modifying existing code — this is how they work, not a bug. My workflow didn't account for this. The fix: commit after every agent turn, and have executors output to staging rather than directly modifying the working tree.
 
 ---
 

@@ -9,20 +9,20 @@
 ## Quick Start
 
 ```bash
-# Live allocation signal
-python scripts/v6_pe_band.py --live
+# Daily pipeline (fetch data + health check + signal + report)
+python scripts/run_daily.py --no-fetch   # if data is already fresh
 
-# Full 17-criterion acceptance test
+# Live allocation signal
+python scripts/run_daily.py --signal-only
+
+# Full 17-criterion acceptance test (5-10 min)
 python scripts/v6_pe_band.py --verify
 
-# Daily data update
-python scripts/v6_pe_band.py --fetch
-
 # Data freshness check
-python scripts/v6_pe_band.py --health
+python scripts/run_daily.py --health-only
 
-# Generate report
-python scripts/v6_pe_band.py --report
+# First-time setup
+python scripts/run_daily.py --setup
 ```
 
 ## Strategy
@@ -71,21 +71,25 @@ No inverse-vol weighting. No regime detection. No cross-sectional scoring.
 ## Architecture
 
 ```
-v6_pe_band.py (493 lines, zero strategy imports)
-  |
-  +-- reload_data()       Load/reload all data from parquet files
-  +-- pe_pct_at()         CSI300 PE 5-year percentile (PIT, no look-ahead)
+v6_pe_band.py (273 lines, strategy engine)
+  +-- reload_data()       Load ETF + PE from parquet files
+  +-- pe_pct_at()         CSI300 PE 5-year percentile (PIT)
   +-- trend()             MA50 + slope gold trend filter
-  +-- backtest()          Strategy backtest engine
+  +-- backtest()          Core backtest engine
   +-- run_walk_forward()  3-fold grid-search walk-forward
   +-- run_verify()        17-criterion acceptance test
-  +-- run_live()          Current allocation signal + health warnings
-  +-- fetch_all()         Daily data pipeline (ETFs + PE + macro)
-  +-- health_check()      Data freshness validation
-  +-- run_report()        Markdown report generator
+
+run_daily.py (583 lines, operations layer)
+  +-- Data pipeline       fetch_etf_data, fetch_pe_data, fetch_macro_data
+  +-- Health checks       Staleness, PE value validation, gold MA boundary
+  +-- Signal              compute_signal, log_signal, signal_history
+  +-- Rebalance           next_rebalance_date, days_to_rebalance
+  +-- Reconciliation      compare signal targets to portfolio, compute trades
+  +-- Notifications       Telegram, email, alert journal
+  +-- Report              auto-generated daily markdown
 ```
 
-**Backup architecture**: `scripts/_funcs.py` + `scripts/asset_rotation_v6.py` — hybrid scoring with regime detection (OOS Sharpe 0.517). Retained for environments without PE data.
+**Backup architecture**: `scripts/_funcs.py` + `scripts/asset_rotation_v6.py` — hybrid scoring with regime detection (OOS Sharpe 0.517).
 
 ## Files
 
@@ -97,11 +101,11 @@ v6_pe_band.py (493 lines, zero strategy imports)
 | `scripts/asset_rotation_v4.py` | v4 backward compat |
 | `scripts/auto_update.py` | Production pipeline (v4 + v6 signal) |
 | `scripts/fetch_macro.py` | PMI + CGB yield fetcher |
-| `docs/v6_项目总结.md` | Full project summary (Chinese) |
+| `docs/HISTORY.md` | Project timeline, bugs, decisions, lessons |
 | `docs/strategy_notes.md` | Failure modes, calibration, design rationale |
-| `docs/risk_engineering.md` | Risk audit — missing variables, edge cases, system risk |
-| `docs/brain_dump.md` | Complete session knowledge dump |
-| `docs/plans/` | Implementation plans, results, journal, open questions |
+| `docs/risk_engineering.md` | Risk audit — missing variables, edge cases |
+| `docs/METHODOLOGY.md` | Process assessment, biases, actor attribution |
+| `docs/plans/` | Implementation plan, audit plan, results |
 
 ## Data
 

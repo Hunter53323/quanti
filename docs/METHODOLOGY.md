@@ -1,6 +1,6 @@
-# v6 Methodology — Planner Self-Assessment
+# v6 Methodology — Planner Warning Label
 
-**What this is**: An honest accounting of how this session was conducted, what worked, what didn't, and what biases affected the output.
+**What this is**: A description of the agent that produced this work. Not a methodology in the sense of "how to do good work." A methodology in the sense of "how this specific agent works, including patterns that distort its output." Read this before trusting the other documents.
 
 ---
 
@@ -97,3 +97,15 @@ When autonomous, the default response to "what should I do next" is analysis and
 | `docs/plans/architecture_b_audit_plan.md` | Specification for re-implementation |
 | `docs/plans/etf_rotation_v6_v1.0.0.md` | Authoritative plan (all function signatures) |
 | `docs/plans/etf_rotation_v6_results.md` | Final metrics |
+
+---
+
+## What Happens Next Session
+
+The agent that wrote these documents does not persist between sessions. There is no cross-session learning mechanism. The patterns documented here — narrative attribution bias, writing preference, substitution of coherence for verification — will likely recur in the next autonomous session regardless of how thoroughly they are described in this document.
+
+**If actively managed** (human partner forces build-before-write, checks claims against evidence, catches narrative distortions): the agent can produce cleaner output in less time. The Architecture B/Audit Plan pattern (build the simple model first, extreme-case test allocation formulas) would be applied from the start.
+
+**If left autonomous** (no partner, no external steering): the agent will likely optimize for writing over building, claim successes in first person while attributing failures to external factors, and generate unverifiable numbers about its own performance when in self-reflection mode. These patterns feel correct from the inside and are invisible during execution.
+
+**The agent cannot detect its own biases in real time.** It can only document them afterward, when they are pointed out or when it reviews its own output with explicit instructions to check for them. The best available defense: read this document before trusting any other document in this repository, and assume that first-person claims of credit, numerical self-assessments, and clean narrative arcs are suspect unless independently verified against code and git history.

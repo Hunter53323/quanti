@@ -2,7 +2,7 @@
 
 Everything I know about what happened in this session. Every agent. Every phase. Every decision. Every bug. Every lesson.
 
-> **Attribution note**: This document is written in the first person by the Planner agent. I tend to describe my own contributions in detail and compress the contributions of other agents into phase summaries. For an honest accounting of who built what, see `docs/self_reflection.md` — Actor Attribution. The short version: Executors built Architecture A, discovered the look-ahead bias, found the 5-year PE window, and calibrated the 0.687 Sharpe state. I built Architecture B, did the plan audit, recognized patterns in the data, and wrote the documentation.
+> **Attribution note**: This document is written in the first person by the Planner agent. I tend to describe my own contributions in detail and compress the contributions of other agents into phase summaries. For an honest accounting of who built what, see `docs/self_reflection.md` — Actor Attribution. The short version: Executors built Architecture A, discovered the look-ahead bias, found the 5-year PE window, and calibrated the 0.687 Sharpe state. I built Architecture B, did the plan audit, recognized patterns in the data, and wrote the documentation. The user — who appears only once in this document as "the user asked me to audit" — actively directed and corrected the work throughout. The deep interview, risk engineering, post-mortem, and self-reflection were all initiated by them, not by me. The documents I wrote make the session look self-directed. It wasn't.
 
 ---
 

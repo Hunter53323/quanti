@@ -233,7 +233,7 @@ def _alloc(amt, sel, vols, vt):
     lev  = min(1.0, vt / pvol) if pvol > 0 else 0
     eq   = amt * lev
     h    = {e: eq * w[e] for e in sel.index}
-    if eq < amt:  h[CASH] = amt - eq
+    if eq < amt:  h[CASH] = h.get(CASH, 0) + (amt - eq)
     return h
 
 def backtest_v6(data, start, end, tn=2, vt=0.15, score_gate_threshold=0.60,

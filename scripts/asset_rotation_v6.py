@@ -96,13 +96,27 @@ print(f"Cash percentage: {cp:.1f}%")
 print(f"AC-12 (cash gate 15-40%): {'PASS' if ac12 else 'FAIL'} ({cp:.1f}%)")
 
 print("\n--- AC-13: DD Re-entry ---")
-le = bf.get("liquidation_events", pd.Series()); ul = [e for e in le if isinstance(e, str) and len(e) > 2]
-mdays = "N/A (no liquidations)" if len(ul) == 0 else "N/A"; ac13 = True
-print(f"Liquidation events: {len(ul)}  Re-entries: {len(ul)}  Median days: {mdays}")
-print(f"AC-13 (re-entry < 45d): {'PASS' if ac13 else 'FAIL'} ({mdays})")
+liq_mask = bf["regime"] == "LIQ"; n_liq = liq_mask.sum()
+if n_liq > 0:
+    liq_dates = bf.index[liq_mask]
+    # Re-entry is detected when regime changes back from LIQ to a normal regime
+    post_liq = bf.index > liq_dates[0]; reentry_mask = (bf["regime"] != "LIQ") & (bf["regime"] != bf["regime"].shift(1))
+    reentry_dates = bf.index[post_liq & reentry_mask]
+    if len(reentry_dates) > 0:
+        mdays = int((reentry_dates[0] - liq_dates[0]).days)
+    else:
+        mdays = float("inf")
+    ac13 = mdays < 45
+    print(f"Liquidation events: {n_liq}  Re-entry after: {mdays}d")
+else:
+    mdays = "N/A (no liquidations)"
+    ac13 = None  # UNTESTED
+    print(f"Liquidation events: 0  AC-13: UNTESTED (DD trigger never fired)")
+print(f"AC-13 (re-entry < 45d): {'PASS' if ac13 else 'UNTESTED' if ac13 is None else 'FAIL'} ({mdays})")
 
 print("\n--- AC-14: TS vs CS z-score (2017) ---")
-bp = dict(tn=2, vt=0.15, score_gate_threshold=0.60, accel_smooth=5, gold_boost_config={"R0": 0.10, "R3": 0.25}, dd_enabled=True)
+bp = dict(tn=2, vt=0.15, score_gate_threshold=0.60, accel_smooth=5, gold_boost_config={"R0": 0.10, "R3": 0.25}, dd_enabled=True,
+          regime_weight_override={"R3": {"w_trend": 0.50, "w_mom": 0.10}})
 b17t = backtest_v6(data, "2017-01-01", "2017-12-31", pmi_data=pmi, cgb_yield_data=cgb, scoring_func=compute_v6_score, **bp)
 b17c = backtest_v6(data, "2017-01-01", "2017-12-31", pmi_data=pmi, cgb_yield_data=cgb, scoring_func=compute_v6_score_cross_sectional, **bp)
 m17t = metrics(b17t); m17c = metrics(b17c); d17 = m17t["total_return"] - m17c["total_return"]

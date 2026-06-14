@@ -178,7 +178,8 @@ def run_benchmarks():
     for bm, label in [("510300","CSI300"), ("518880","Gold"), ("511010","Bonds")]:
         m = metrics_basic(T[bm]["close"]["2020-01-01":"2025-12-31"])
         print(f"  {label}: Sharpe={m['sharpe']:.3f} CAGR={m['cagr']:.2%} MaxDD={m['maxdd']:.2%}")
-    c6040 = 0.6 * T["510300"]["close"] + 0.4 * T["511010"]["close"]
+    a0 = float(T["510300"]["close"].iloc[0]); b0 = float(T["511010"]["close"].iloc[0])
+    c6040 = 0.6 * T["510300"]["close"] / a0 + 0.4 * T["511010"]["close"] / b0
     m60 = metrics_basic(c6040["2020-01-01":"2025-12-31"])
     mv4 = ma_filter_benchmark()
     print(f"  60/40:    Sharpe={m60['sharpe']:.3f} CAGR={m60['cagr']:.2%} MaxDD={m60['maxdd']:.2%}")
@@ -222,7 +223,8 @@ def run_verify():
     d2223 = backtest("2022-01-01", "2023-12-31"); d2026 = backtest("2026-01-01", "2026-06-12")
     print("[3/4] Benchmarks ...")
     m300 = metrics_basic(T["510300"]["close"]["2020-01-01":"2025-12-31"])
-    m6040 = metrics_basic((0.6 * T["510300"]["close"] + 0.4 * T["511010"]["close"])["2020-01-01":"2025-12-31"])
+    a0v = float(T["510300"]["close"].iloc[0]); b0v = float(T["511010"]["close"].iloc[0])
+    m6040 = metrics_basic((0.6 * T["510300"]["close"] / a0v + 0.4 * T["511010"]["close"] / b0v)["2020-01-01":"2025-12-31"])
     mv4 = ma_filter_benchmark()
     print("[4/4] Computing acceptance criteria ...\n")
     ac = [

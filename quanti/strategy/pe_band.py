@@ -1,5 +1,10 @@
 """
-PE-Band Dynamic Allocation Strategy.
+DEPRECATED -- See scripts/v6_pe_band.py for the accepted v6 strategy.
+
+PE-Band Dynamic Allocation Strategy (legacy).
+This is an earlier, less sophisticated implementation with different defaults:
+    eq_max=0.80, fixed gold=10%, quarterly rebalancing
+vs v6's: eq_max=0.60, conditional gold trend filter, monthly rebalancing.
 
 Allocates between equity ETF and bond ETF based on CSI300 PE percentile:
     equity_pct = max_equity - (pe_percentile / 100) * (max_equity - min_equity)

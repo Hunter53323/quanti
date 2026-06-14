@@ -1,8 +1,8 @@
-# ETF Rotation v6 -- Implementation Plan (v1.0.0 Authoritative)
+# ETF Rotation v6 -- Architecture A Implementation Plan (Historical)
 
-**Status**: EXECUTABLE -- incorporates full implementation cycle learnings + PE-Band walk-forward results
+**Status**: PHASE 2 ARTIFACT — written during Architecture A implementation. Architecture B (PE-Band) became the primary strategy after this document was written. Section 16 was appended post-hoc with Architecture B results.
 **Date**: 2026-06-14
-**Supersedes**: All prior planning drafts and intermediate revisions
+**Primary strategy**: See `scripts/v6_pe_band.py`. This document describes the Architecture A hybrid scoring system (backup), preserved for reference.
 **Codebase reference**: `C:\study\AIWorkspace\quanti`
 **Two architectures benchmarked**: A (Hybrid Scoring, `_funcs.py`) and B (PE-Band + Gold Trend, `v6_oos.py`)
 

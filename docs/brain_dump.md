@@ -16,7 +16,7 @@ A Critic agent had reviewed the v4/v5 ETF rotation strategy and found it returns
 
 ### Phase A: Plan Audit and Revision (Planner)
 
-I read `_funcs.py` (146 lines at that time) and the Critic's plan. Found 3 critical issues:
+I audited `_funcs.py` (146 lines) against the Critic's plan. Issues identified included:
 
 1. **ADX normalization mismatch**: ADX was mapped to [0,1] while trend/momentum/acceleration were z-scored to ~[-3,+3]. ADX had half its nominal weight and injected a +0.125 bias into every score. Fix: z-score all four components.
 
@@ -47,7 +47,7 @@ Revised plan produced at `.omc/plans/etf_rotation_v6_revised.md` with:
 **Phase 5 — Calibration**: Three rounds of executor tuning:
 - Round 1: Added hybrid scoring, 20-day hysteresis, score gate 0.60, top-n=2, gold boost → 12/17 PASS
 - Round 2: Gate calibration + top-N tuning → degenerated (tn=1 was wrong)
-- Round 3: Gold boost calibration (Config A/B/C) → R0=0.10, R3=0.25 selected. Reached 0.687 Sharpe, 15/17 PASS (documented, not committed to git because executors didn't commit their calibration state).
+- Round 3: Gold boost calibration (Config A/B/C) → R0=0.10, R3=0.25 selected. Reached 0.687 Sharpe, 15/17 PASS. This state was not committed to git — I did not instruct executors to commit or provide them a commit workflow.
 
 ### Phase C: Source Deletion and Recovery (Planner + Executor)
 

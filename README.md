@@ -101,7 +101,7 @@ v6_pe_band.py (493 lines, zero strategy imports)
 | `docs/strategy_notes.md` | Failure modes, calibration, design rationale |
 | `docs/risk_engineering.md` | Risk audit — missing variables, edge cases, system risk |
 | `docs/brain_dump.md` | Complete session knowledge dump |
-| `.omc/plans/` | Planning docs, results, journal, open questions |
+| `docs/plans/` | Implementation plans, results, journal, open questions |
 
 ## Data
 

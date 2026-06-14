@@ -223,7 +223,7 @@ scripts/auto_update.py           (204 lines) — Production pipeline
 scripts/fetch_macro.py           (167 lines) — PMI + CGB yield fetcher
 ```
 
-### Local only (in `.omc/plans/`)
+### Local only (in `docs/plans/`)
 
 ```
 etf_rotation_v6_v1.0.0.md       — Authoritative implementation plan (700+ lines)

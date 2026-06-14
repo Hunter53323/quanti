@@ -156,3 +156,64 @@ Key suites: `test_backtest_engine.py` (T+1, walk-forward), `test_risk_checker.py
 **Bull market cost** — defense exits early in trending markets. 2020-2021 negative by design.  
 **T+1 gap** — standalone +13.72% vs framework +4.37%. Difference is settlement lag.  
 **Late-listed ETFs** — 5 newest ETFs lack 2015-2019 data. Dynamic pool prevents look-ahead, not absence.
+
+---
+
+## Operations Runbook
+
+### 你需要的东西
+
+- 一个可以运行 Python 的机器（Windows/Mac/Linux 都行）
+- `pip install akshare numpy pandas pyarrow python-dotenv` 跑过一次
+- `data/clean/` 下有 25 个 `.parquet` 文件（跑过 `scripts/download_etf_universe.py`）
+
+### 每月操作（月末最后一个交易日收盘后）
+
+```bash
+# 1. 更新数据（拉取所有 ETF 最新日线）
+python scripts/download_etf_universe.py
+
+# 2. 出信号
+python scripts/daily_signal.py
+```
+
+脚本会打印三件事：
+1. **市场状态** — 告诉你现在是该满仓还是该躲
+2. **候选 ETF** — 通过筛选的所有 ETF 和得分
+3. **持仓信号** — 下个月该持有的 3 只 ETF（代码+名字+行业）
+
+### 每天操作（收盘后 2 分钟）
+
+```bash
+python scripts/daily_signal.py --short
+```
+
+输出要么是三只 ETF 代码，要么是 `511880 518880`（防御模式）。
+
+**只要输出的代码变了，就立刻调仓。** 不要等月末——如果 Sharp 闪电退出（-3%）触发了，它会直接输出 `511880 518880`，当天就得卖。
+
+### 调仓怎么执行
+
+假设你上个月持有 `512480 159928 512660`，今天的信号是 `515070 159928 512400`：
+
+- `159928` 两边都有 → 不动
+- `512480` 和 `512660` 不在新信号里 → 卖出
+- `515070` 和 `512400` 是新信号 → 买入
+
+每只买 `可用资金 / 新买只数 × 0.90`，留 10% 缓冲防止算错。按 100 股取整（ETF 单价一般 1-5 元，100 股 = 几百块，不会买不了）。
+
+### 不要做什么
+
+- **不要在熊市中手动干预。** 整个策略的核心就是"大盘不好时躲进债金"。你手动买回来就是在破坏安全网。
+- **不要因为单月亏了就改参数。** 策略在历史上熊市窗口中也是先亏后赚——给它时间。
+- **不要跳过 Sharp 闪电退出。** 即使你觉得 "这个看起来不是暴跌"，规则触发就执行。回测证明 -3% 阈值有效且稳定，你的直觉不会比回测更准。
+
+### 参数速查
+
+| 参数 | 值 | 在哪改 |
+|------|------|------|
+| 持仓数 | 3 | `daily_signal.py` 顶部 `TOP_N` |
+| 黄金比例 | 20% | `daily_signal.py` 顶部 `GOLD_PCT` |
+| Sharp 阈值 | -3% | `daily_signal.py` 顶部 `SHARP_THRESHOLD` |
+| 确认天数 | 5 | `daily_signal.py` 顶部 `N_CONFIRM` |
+| 冷却天数 | 40 | `daily_signal.py` 顶部 `M_COOLDOWN` |

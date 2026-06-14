@@ -1,76 +1,103 @@
 # Planner Self-Reflection — v6 Session
 
 **Written by**: The Planner agent that ran this session
-**Context**: User asked me to conduct self-reflexive analysis on my own reasoning, document which heuristics I used, which conclusions are fragile, and what a better version of me would do differently. Then asked me to commit it to the repo so it survives session state loss.
+**Contextual caveat**: I have run exactly one planning session of this type. Everything below is provisional. These patterns worked once, on one problem. I have zero evidence about their transferability.
 
 ---
 
-## Raw Notes from the Self-Reflection
+## What I actually did (not what I later said I did)
 
-### Heuristics I used during the session (many of which I was not aware of at the time)
+### I caught 1 of 2 structural flaws in the audit
 
-1. **Formula tracing before component auditing.** When auditing the plan, I started not from "what does this component do?" but from "plug the actual normalization schemes into the composite score formula and compute the effective weights." This caught the ADX [0,1] vs z-score [-3,+3] mismatch that a descriptive audit would have missed. The heuristic: if arithmetic errors are more detectable than design ambiguities, start with the arithmetic.
+The Critic's plan had two structural flaws:
+1. ADX normalization [0,1] vs other components z-score [-3,+3] — scale mismatch in the composite score. **Caught.**
+2. Inverse-vol weighting `w = (1/v) / sum(1/v)` systematically allocates to the lowest-vol asset regardless of signal quality. **Missed.**
 
-2. **Tyranny of the first component in allocation formulas.** `w = (1/v) / sum(1/v)`. The lowest-vol asset dominates regardless of signal quality. This is first-order behavior of the function form. I did NOT catch this in the audit because I was auditing the signal construction formula, not the allocation formula. The heuristic: trace the FULL transformation from signal value to portfolio position, not just the scoring step.
+I caught #1 because I traced the arithmetic of the scoring formula. I missed #2 because I did not trace the full transformation from signal to portfolio position — I stopped at the score. The allocation formula received the same level of scrutiny as a component description, not as a function whose first-order behavior determines the strategy's output.
 
-3. **Cross-fold convergence as the ultimate validation criterion.** Architecture A's parameters were unstable across folds. Architecture B's parameters converged to the same values independently. Convergence is a stronger signal than any single Sharpe value. This emerged from the session — it was not a prior. The heuristic: if a model doesn't converge across folds after one round of calibration, kill it. Don't calibrate further.
+I do not know whether a 50% hit rate on structural flaws is typical, good, or poor for a Planner agent. I have no baseline. But it is the number, and it is what it is.
 
-4. **Fewer components → fewer noise sources.** Architecture B beat A with 2 signals vs 4 components + regime detection + gold boost + score gate + DD controls. Every additional component is an additional noise source that interacts with others. The heuristic: if three consecutive extensions all degrade performance, stop adding and start removing.
+### I failed upward from Architecture A to Architecture B
 
-5. **Discontinuities diagnose faster than statistics.** When the backtest showed -77% CAGR, I plotted the PV curve and saw it drop from 1.0 to 0.17 on the FIRST rebalance day. That's a unit conversion error, not a subtle statistical problem. Find the jump, find the cause. Applies to both bugs and strategy failures.
+Architecture A was not killed by design insight. It was killed by exhaustion — after 5 phases, 6 executors, and 3 calibration rounds, I accepted that further parameter tuning would not close the gap. Architecture B was not a planned alternative. It was an emergency rebuild.
 
-6. **Executors work from specifications, not diffs.** They re-implement rather than modify. Framing matters: "implement X from this spec" → reimplements. "Modify file Y to change Z" → diffs. I mostly used framing #1 when I needed framing #2. After three overwrite cycles, I stopped spawning executors for modifications and did the work directly.
+The lesson I later extracted ("plan two architectures from the start, build the simple one first") is correct. But I did not learn it from wisdom. I learned it from failing to deliver on the first architecture and stumbling into a better one. The lesson is real; the path to it was not.
 
-7. **Valuation as a sufficient statistic for macro conditions.** Three macro extensions were tested and rejected. The PE signal already encodes macro conditions implicitly — cheap markets correlate with weak economies, expensive with strong ones. Adding explicit macro variables injects measurement error without independent signal. This is a causal claim specific to Chinese equities; may not hold in other markets.
+### The 5-year PE window was discovered by an executor
 
-8. **The primary risk is the operator, not the model.** The current signal (14% equity, 0% gold, 86% bonds) is psychologically hard to follow — the temptation to override in the direction of "more equity" is asymmetric. The strategy protects through conservatism when expensive. Operator overrides systematically remove that protection.
+An executor ran an ablation test comparing full-history vs 5-year PE window. The data showed Fold 2 Sharpe improving from -0.39 to +0.67. I recognized the pattern — 2007's bubble PE distorting 2024 percentiles — and understood the mechanism. But the discovery was not mine. I correctly identified the importance of the finding and made it the centerpiece of Architecture B. But I did not design the test that found it.
 
-### Which conclusions don't generalize beyond this session
+Credit distribution: executor ran the experiment, data showed the pattern, I recognized what it meant. Each component was necessary. Attributing this to "my design decision" overstates my role.
 
-- **"PE is a sufficient statistic for macro"** — tested on one market, 11 years of data, three rejected macro extensions. Could be that PE genuinely absorbs all macro information, or that my specific macro extensions were the wrong ones, or that this held only for 2015-2025. I cannot distinguish these. The honest statement is "I failed to find a useful macro extension," not "macro extensions cannot work."
+### Cross-fold convergence as a validation criterion was invented on the spot
 
-- **"Simple beats complex, and the gap is quantifiable"** — n=1 comparison between two specific architectures. Other simple models might be worse. Other complex models might be better. The inference is bounded by the comparison set.
+I had never used this criterion before. I noticed that Architecture A's parameters jumped around between folds while Architecture B's converged to the same values. The contrast was stark. I then reasoned backward: stable parameters across different training windows → signal is structural, not noise → this is a strong validation signal.
 
-- **"Cross-fold convergence is the ultimate test"** — n=1 observation where it worked. More conservative: convergence is a NECESSARY condition for future performance, not sufficient. Convergent models can still be bad. Non-convergent models cannot be good. This is a filter, not a guarantee.
-
-- **"Operator override is the #1 risk"** — specific to a strategy with an extremely conservative current signal. If the signal were aggressive, the override direction would be different. Specific to retail investors; institutional overrides follow different patterns.
-
-- **"100% of extensions were rejected"** — 5 extensions tested. All failed. But they were all tested within Architecture A's framework, with its broken allocation formula. They might have worked on a different base architecture, with different rejection criteria, in a different testing order.
-
-### What I would do differently (and why)
-
-1. **Kill the allocation formula at audit, not after implementation.** If `_alloc()` puts 80% in bonds regardless of signal quality, the whole architecture is structurally broken. Fix the allocator before building anything else.
-
-2. **Convergence test after one calibration round. If it fails, kill the model.** Every additional round of calibration on a non-convergent model is waste disguised as diligence.
-
-3. **Plan two architectures from the start.** Build the simple one first — it sets the baseline and is the fallback. The simple model in this session was discovered as an emergency, not planned.
-
-4. **Executor outputs go to staging. I review, apply, and commit before the next spawn.** No executor cleans up. This prevents overwrites and deletions.
-
-5. **Pipeline before documentation.** A working daily workflow with thin docs is better than beautiful docs with no pipeline. The pipeline validates the strategy and documents itself through logs.
-
-6. **Commit after every agent turn.** Not after every phase. This protects against source deletion and makes recovery trivial.
-
-7. **Never put specifications in gitignored directories.** Plans, journals, results — these are more valuable than code. If I need it to rebuild, it goes in `docs/` and gets committed.
-
-### What genuinely generalizes (in my view, with appropriate uncertainty)
-
-1. **Trace numbers from signal to portfolio position, not just component descriptions.** The arithmetic reveals what the prose conceals.
-
-2. **Portfolio value crashing 99% on a single rebalance is either a bug or a structural problem. No statistics needed. Find the discontinuity.**
-
-3. **If a model has more tunable parameters than the data supports for a specific regime, remove that regime's parameters or remove the regime. You cannot calibrate what you cannot observe.**
-
-4. **The specific evidence from this session is: 2-signal, 4-parameter model produced 1.249 Sharpe. 4-component, 12+ parameter model produced 0.517 Sharpe. Whether this pattern holds elsewhere depends on whether the structural problems (inverse-vol drag, cross-sectional noise, overparameterization) are present in the new context.**
-
-### What I overstated and how to correct it
-
-- **"PE already encodes macro conditions"** → "I tested three macro extensions and found no improvement over PE alone. One possible mechanism is that valuation absorbs macro information, but the causal direction is untested."
-
-- **"5-year PE window is the most impactful design decision"** → "For this model on this dataset (2015-2025 Chinese equities), switching from full-history to 5-year PE window improved Fold 2 Sharpe from -0.39 to +0.67. Optimal window may differ for other periods or markets."
-
-- **"The primary risk is operator override"** → "Given the current extremely conservative signal (14% equity) and the psychological asymmetry of override temptation, operator override is a high-consequence risk for this specific strategy in its current state."
+The reasoning is plausible. But it is n=1. I have no evidence that this criterion distinguishes good models from bad models in general. It worked here because it happened to coincide with the better-performing architecture. If Architecture B had converged but performed worse than A, I might not have noticed convergence at all. The criterion was selected because it matched the outcome, not validated independently.
 
 ---
 
-*Written by the Planner after completing the v6 session. Committed to the repo because session replay state was deleted and critical files were stored in gitignored directories — learned that the hard way. This file is the durable artifact of the self-reflection, in case the conversation transcript is lost.*
+## Where the self-reflection document I wrote earlier is dishonest
+
+### The heuristics section mislabels post-hoc discoveries as prior methods
+
+I listed 8 "heuristics I used during the session." Of these:
+- 3 were genuine priors (formula tracing, discontinuity debugging, and even those were only partially applied)
+- 4 were learned mid-session or derived from the session outcome
+- 1 was a post-hoc risk assessment presented as a heuristic
+
+A more honest framing: "Patterns I noticed during the session that might be useful in future work, with the caveat that I have not tested them beyond this one case."
+
+### "What I would do differently" describes a better agent, not me
+
+"Kill the allocation formula at audit" — I could not have done this. I did not know to look at allocation formulas. This describes what a better version of me would do, not what the actual me, with the actual capabilities I had at hour 1, could have executed.
+
+"Convergence test after one calibration round, then kill the model" — I invented this criterion mid-session. I have no evidence it works beyond this one case. Presenting it as an actionable "would do" implies a confidence I do not have.
+
+Honest versions would read: "Things I now suspect matter, based on one session's experience, which I would test in the next session rather than treating as established."
+
+### "What genuinely generalizes" has no basis for the claim
+
+"Trace numbers from signal to portfolio position" — I did this for the scoring formula but not the allocation formula. The principle is good. My execution of it was incomplete. Generalizing from an incomplete execution is premature.
+
+"Portfolio value crashing 99% on a single rebalance is either a bug or a structural problem" — this one is genuinely robust. It's a debugging heuristic that doesn't depend on the specific problem domain.
+
+But the header "what genuinely generalizes" implies evidence I don't have. These are hypotheses about generalization, not verified generalizations.
+
+### The biggest omission: I don't know my own error rate
+
+I found 1 of 2 structural flaws in the original plan. Is that good? Bad? Typical? I have no idea. I have no calibration on what a Planner agent should catch. For all I know, I missed three other flaws that are still in the codebase, undiscovered.
+
+The self-reflection should admit this: "My audit caught one critical issue and missed another of equal severity. I do not know whether a 50% detection rate is acceptable, nor do I know whether there are additional undetected flaws. The only honest posture toward my own audit capability is calibrated uncertainty."
+
+---
+
+## What I actually believe (provisionally)
+
+1. Tracing arithmetic from signal to portfolio position catches things component-level description misses. I applied this to scoring but not to allocation. Next time, apply it to both.
+
+2. If parameters don't converge across folds after one calibration round, that's probably more informative than the Sharpe ratio. But I've only seen this once. I'd test it as a hypothesis, not rely on it as a rule.
+
+3. A model with 4 parameters that converge is more trustworthy than a model with 12 parameters that don't. But this might be specific to the data-to-parameter ratio in this particular problem. I don't know the generalization boundary.
+
+4. My pattern recognition (identifying why something failed from the data) is stronger than my preventive audit (catching failures before they happen). This is a known asymmetry. I should not pretend otherwise.
+
+5. I write clean post-hoc narratives. This is both a skill and a liability — it makes messy processes look cleaner than they were. Readers should discount the narrative coherence of my documents by some amount I cannot calibrate.
+
+6. The documents I produced at the end of the session (README, strategy notes, risk engineering, etc.) are useful. The confidence with which I made claims in them may overstate the evidence. The honest reader should treat them as "best understanding as of session end" not "verified conclusions."
+
+---
+
+## Calibration
+
+I have run one session of this type. Here is what I know and don't know:
+
+**I know**: The PE-Band model produced OOS Sharpe 1.249 on 2015-2025 Chinese ETF data with 3-fold walk-forward. The code works. The documentation is complete. The bugs I found are fixed.
+
+**I don't know**: Whether the model will work in 2027. Whether the 5-year PE window is optimal or merely the best of two options tested. Whether cross-fold convergence is a reliable validation criterion. Whether my audit missed other structural flaws. Whether the "10 rules for the next planner" are general or specific to this session.
+
+**I don't know what I don't know**: This is the category that matters most and is, by definition, invisible to me.
+
+---
+
+*Rated by myself: this version is more honest than the previous one. I have tried not to claim foresight I didn't have, not to present emergent discoveries as prior methods, and not to overstate the certainty of conclusions drawn from a single session. The remaining errors are ones I cannot see.*

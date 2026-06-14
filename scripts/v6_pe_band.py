@@ -21,21 +21,24 @@ ETFS = ["510300","510500","159915","510880","518880","511010","511880"]
 CASH, GOLD, BOND = "511880", "518880", "511010"
 
 # ── load data ──
-T = {e: pd.read_parquet(DIR/f"{e}.parquet")
-     .assign(dt=lambda df: pd.to_datetime(df["trade_date"]))
-     .set_index("dt").sort_index()[["close"]]
-     for e in ETFS}
-
-pe_raw = pd.read_parquet(MACRO/"csi300_pe.parquet").set_index("date")
-
-# ── PE Percentile (PIT, 5-year rolling window) ──
 ROLLING_DAYS = 5 * 252  # 5 years
-pe_raw["pe_pct"] = np.nan
-for i in range(ROLLING_DAYS, len(pe_raw)):
-    window = pe_raw["pe"].iloc[max(0,i-ROLLING_DAYS):i]
-    pe_raw.iloc[i, pe_raw.columns.get_loc("pe_pct")] = (
-        (window <= pe_raw["pe"].iloc[i]).sum() / len(window)
-    )
+
+def reload_data():
+    """(Re)load ETF and PE data from disk. Call after data pipeline updates files."""
+    global T, pe_raw
+    T = {e: pd.read_parquet(DIR/f"{e}.parquet")
+         .assign(dt=lambda df: pd.to_datetime(df["trade_date"]))
+         .set_index("dt").sort_index()[["close"]]
+         for e in ETFS}
+    pe_raw = pd.read_parquet(MACRO/"csi300_pe.parquet").set_index("date")
+    pe_raw["pe_pct"] = np.nan
+    for i in range(ROLLING_DAYS, len(pe_raw)):
+        window = pe_raw["pe"].iloc[max(0,i-ROLLING_DAYS):i]
+        pe_raw.iloc[i, pe_raw.columns.get_loc("pe_pct")] = (
+            (window <= pe_raw["pe"].iloc[i]).sum() / len(window)
+        )
+
+reload_data()  # initial load at module import
 
 # ── helpers ──
 def pe_pct_at(dt):

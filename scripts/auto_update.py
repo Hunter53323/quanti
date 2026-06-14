@@ -48,20 +48,36 @@ ALL_ETFS = {
 
 
 def fetch_macro_data():
-    """Fetch PMI and CGB yield data."""
+    """Fetch PMI, CGB yield, and CSI300 PE data."""
     print("=" * 60)
     print("  STEP 0: FETCH MACRO DATA")
     print("=" * 60)
     print(f"  Start: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    ok = True
     try:
         from scripts.fetch_macro import fetch_all_macro
         fetch_all_macro()
-        print("  OK   Macro data fetched\n")
-        return True
+        print("  OK   PMI + CGB yield fetched")
     except Exception as e:
-        print(f"  WARN Macro fetch failed: {e}")
-        print("  Continuing with existing macro data...\n")
-        return False
+        print(f"  WARN PMI/CGB fetch failed: {e}")
+        ok = False
+    try:
+        # Fetch latest CSI300 PE data for PE-Band model
+        import akshare as ak
+        import pandas as pd
+        df = ak.stock_index_pe_lg(symbol="沪深300")
+        df["date"] = pd.to_datetime(df.iloc[:, 0].astype(str).str.replace("-", ""), format="%Y%m%d")
+        df["pe"] = df.iloc[:, 6].astype(float)
+        df = df[["date", "pe"]].dropna()
+        df = df[df["pe"] > 0].sort_values("date")
+        os.makedirs("data/macro", exist_ok=True)
+        df.to_parquet("data/macro/csi300_pe.parquet")
+        print(f"  OK   CSI300 PE fetched ({len(df)} rows, {df['date'].iloc[-1].date()})")
+    except Exception as e:
+        print(f"  WARN PE fetch failed: {e}")
+        ok = False
+    print()
+    return ok
 
 
 def fetch_latest_data():
@@ -137,13 +153,14 @@ def run_backtest():
 
 
 def run_v6_signal():
-    """Print v6 PE-Band live allocation targets."""
+    """Print v6 PE-Band live allocation targets using freshly loaded data."""
     print("\n" + "=" * 60)
     print("  STEP 2: v6 PE-BAND LIVE SIGNAL")
     print("=" * 60)
     try:
         import pandas as pd
-        from scripts.v6_pe_band import pe_pct_at, trend, T as pe_t, GOLD
+        from scripts.v6_pe_band import reload_data, pe_pct_at, trend, T as pe_t, GOLD
+        reload_data()  # Refresh from disk after data pipeline updated files
         today = pd.Timestamp(datetime.now().strftime("%Y-%m-%d"))
         dr = pd.DatetimeIndex(sorted(set().union(*[df.index for df in pe_t.values()])))
         latest = dr[dr <= today][-1] if len(dr[dr <= today]) > 0 else today

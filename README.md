@@ -1,25 +1,24 @@
 # quanti
 
 A-share algorithmic trading — framework + standalone scripts.  
-Core: 25-ETF multi-sector rotation with market-state defense (OOS +13.72%).
+Core: 25-ETF multi-sector rotation with market-state defense (OOS +15.24%).
 
 ---
 
 ## Quick Start
 
 ```bash
-# Download missing ETF data (one-time)
+# 数据下载（首次运行）
 python scripts/download_etf_universe.py --dry-run
 python scripts/download_etf_universe.py
 
-# Market-state strategy — standalone (fast, param sweeps)
-python scripts/backtest_etf_market_state.py
+# 每日信号
+python scripts/daily_signal.py              # 完整报告
+python scripts/daily_signal.py --short      # 仅 ticker 列表
 
-# Market-state strategy — framework engine (T+1, live-realistic)
-python scripts/run_market_state_backtest.py
-
-# v6 PE-Band — standalone single-file strategy
-python scripts/v6_pe_band.py --verify
+# 回测
+python scripts/backtest_etf_market_state.py  # 月频快照（快）
+python scripts/run_market_state_backtest.py  # 框架引擎（严谨，含 T+1）
 ```
 
 ---
@@ -47,14 +46,13 @@ Standalone monthly snapshot (instant settlement):
 
 | Variant | Test CAGR | Sharpe | MaxDD |
 |---------|-----:|-------:|------:|
-| Bare trend | +6.54% | 0.439 | 18.7% |
-| +A43 decay | +7.09% | 0.470 | 17.8% |
-| +Sharp3pct exit | +10.48% | 0.665 | 7.6% |
-| +Gold(80/20) defense | +9.28% | 0.585 | 16.8% |
-| **All three** | **+13.72%** | **0.839** | **7.7%** |
+| Bare trend | +8.27% | 0.485 | 16.5% |
+| +A43 decay | +8.99% | 0.520 | 15.6% |
+| +Sharp3pct exit | +11.99% | 0.670 | 6.7% |
+| +Gold(80/20) defense | +11.19% | 0.622 | 14.6% |
+| **All three** | **+15.24%** | **0.822** | **6.7%** |
 
-Train (2015-2021) +5.77%, Sharpe 0.894. All 6 overfitting audits passed.  
-Framework engine (T+1): +4.37% — conservative, closer to live execution.
+Train (2015-2021) +6.56%, Sharpe 0.931. All 6 overfitting audits passed.
 
 ---
 
@@ -67,6 +65,7 @@ Framework engine (T+1): +4.37% — conservative, closer to live execution.
 | `v6_pe_band.py` | — | PE-Band standalone (zero framework deps). OOS Sharpe 1.25, CAGR +15.7% |
 | `v6_oos.py` | — | v6 walk-forward OOS validation |
 | `run_daily.py` | — | v6 daily operations layer |
+| `daily_signal.py` | data/config | 每日信号：市场状态 + 持仓建议。`--short` 输出 ticker 列表 |
 | `backtest_etf_market_state.py` | data/config | Market-state rotation. Own backtest logic, uses framework for data+universe |
 | `overfitting_probe.py` | data/config | 6-test audit. Own logic, framework data layer |
 | `download_etf_universe.py` | data/fetch | Batch download. Uses `StockFetcher` + `DataStorage` |
@@ -110,21 +109,22 @@ quanti/                         # Framework (OOP, pluggable)
 ├── indicators.py               SMA, EMA, ADX, ATR, RSI, Bollinger
 └── types.py                    Bar, MarketData, Portfolio, Signal, Order
 
-scripts/                        # Standalone (self-contained, no framework dep)
-├── backtest_etf_market_state.py   ★ Market-state standalone
-├── v6_pe_band.py                  ★ PE-Band standalone (493 lines)
-├── _funcs.py                      v4 engine library
-├── auto_update.py                 v4 daily pipeline
-├── run_daily.py                   v6 operations layer
-├── overfitting_probe.py           6-test audit
-└── download_etf_universe.py       Batch data fetcher
+scripts/                        # 独立脚本
+├── daily_signal.py                 ★ 每日信号（市场状态 + 持仓建议）
+├── backtest_etf_market_state.py    ★ 月频快照回测
+├── run_market_state_backtest.py    ★ 框架引擎回测（T+1）
+├── overfitting_probe.py            6 项过拟合检验
+├── download_etf_universe.py        批量数据下载
+├── v6_pe_band.py                   PE-Band 独立版
+├── _funcs.py + auto_update.py      v4 动量轮动
+└── run_daily.py                    v6 日度运营
 ```
 
 ---
 
 ## Data
 
-20/25 ETFs loaded from AkShare (Eastmoney API). Parquet files in `data/clean/`.
+25/25 ETFs loaded (54,382 bars total). Source: AkShare Sina API. `data/clean/*.parquet`.
 
 | Core ETFs | Rows | Start |
 |-----------|-----:|-------|
@@ -136,7 +136,7 @@ scripts/                        # Standalone (self-contained, no framework dep)
 | 511880 MoneyMarket | 3,195 | 2013 |
 | +14 sector ETFs | — | — |
 
-5 ETFs need download. Run `scripts/download_etf_universe.py`.
+Run `scripts/download_etf_universe.py` to refresh data.
 
 ---
 
@@ -154,7 +154,7 @@ Key suites: `test_backtest_engine.py` (T+1, walk-forward), `test_risk_checker.py
 
 **Gold path dependency** — 2022-2025 gold +156%. 80/20 bond/gold conservative split.  
 **Bull market cost** — defense exits early in trending markets. 2020-2021 negative by design.  
-**T+1 gap** — standalone +13.72% vs framework +4.37%. Difference is settlement lag.  
+**T+1 gap** — standalone +15.24% vs framework +2.89%. Difference is settlement lag.  
 **Late-listed ETFs** — 5 newest ETFs lack 2015-2019 data. Dynamic pool prevents look-ahead, not absence.
 
 ---

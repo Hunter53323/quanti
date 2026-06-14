@@ -18,6 +18,7 @@ from pathlib import Path
 
 # Import StockFetcher first (patches requests + cleans proxy env at module level)
 from quanti.data.ingestion.stock_fetcher import StockFetcher
+from quanti.data.ingestion.akshare_fetcher import AkShareETFetcher
 from quanti.data.storage import DataStorage
 
 # ── ETF Universe ──────────────────────────────────────────────────────────────
@@ -27,6 +28,18 @@ from quanti.data.storage import DataStorage
 from quanti.config.etf_universe import ETF_UNIVERSE_MULTI
 
 ETF_UNIVERSE = ETF_UNIVERSE_MULTI
+
+
+def _normalize_bars(bars, target_code):
+    """Fix symbol field in bars to use the bare ETF code (e.g. 512400).
+
+    AkShareETFetcher uses Sina symbols like ``sh512400``.  DataStorage
+    strips .SH/.SZ suffixes but NOT sh/sz prefixes, so we normalise here.
+    ETFDailyBar is frozen — mutate via object.__setattr__.
+    """
+    for b in bars:
+        object.__setattr__(b, "symbol", target_code)
+    return bars
 
 
 END_DATE = "20251231"
@@ -103,7 +116,10 @@ def main():
         return
 
     # ── Live download ─────────────────────────────────────────────────────────
-    fetcher = StockFetcher()
+    # ETF-specific endpoint first (ak.fund_etf_hist_sina).  stock_zh_a_hist is
+    # an individual-stock endpoint that doesn't support ETFs.
+    etf_fetcher = AkShareETFetcher()
+    stock_fetcher = StockFetcher()
     storage = DataStorage()
 
     total_bars = 0
@@ -113,39 +129,57 @@ def main():
         code = etf["code"]
         start_date = _fmt_date(etf["list_date"])
 
+        bars = None
+        source = "akshare-etf-sina"
+
+        # 1) Primary: ETF-specific endpoint (ak.fund_etf_hist_sina)
         try:
-            bars = fetcher.fetch_daily(
+            bars = etf_fetcher.fetch_daily(
                 symbol=code,
                 start_date=start_date,
                 end_date=END_DATE,
-                max_retries=3,
             )
-            bar_count = len(bars)
+        except Exception:
+            pass
 
-            if bar_count == 0:
-                print(f"[{idx:2d}/{total}] {code} ({etf['name']}): OK  (0 bars)")
-                storage.log_ingestion(
-                    "akshare", code, start_date, END_DATE, 0, "success",
+        # 2) Fallback: stock endpoint (ak.stock_zh_a_hist)
+        if not bars:
+            source = "akshare-stock"
+            try:
+                bars = stock_fetcher.fetch_daily(
+                    symbol=code,
+                    start_date=start_date,
+                    end_date=END_DATE,
+                    max_retries=2,
                 )
-                continue
+            except Exception:
+                pass
 
-            storage.save_bars_clean(code, bars)
-            storage.log_ingestion(
-                "akshare", code, bars[0].trade_date, bars[-1].trade_date,
-                bar_count, "success",
-            )
-
-            total_bars += bar_count
-            print(f"[{idx:2d}/{total}] {code} ({etf['name']}): done, {bar_count} bars  "
-                  f"{bars[0].trade_date} ~ {bars[-1].trade_date}")
-
-        except Exception as e:
-            msg = str(e)
+        # 3) Process result
+        if not bars:
+            msg = f"fund_etf_hist_sina and stock_zh_a_hist both failed for {code}"
             print(f"[{idx:2d}/{total}] {code} ({etf['name']}): FAILED  ({msg})")
-            storage.log_ingestion(
-                "akshare", code, start_date, END_DATE, 0, "error", msg,
-            )
+            storage.log_ingestion(source, code, start_date, END_DATE, 0, "error", msg)
             failures.append((code, msg))
+            continue
+
+        # Normalise symbol (Sina source uses sh/sz prefix)
+        bars = _normalize_bars(bars, code)
+        bar_count = len(bars)
+
+        if bar_count == 0:
+            print(f"[{idx:2d}/{total}] {code} ({etf['name']}): OK  (0 bars)")
+            storage.log_ingestion(source, code, start_date, END_DATE, 0, "success")
+            continue
+
+        storage.save_bars_clean(code, bars)
+        storage.log_ingestion(
+            source, code, bars[0].trade_date, bars[-1].trade_date,
+            bar_count, "success",
+        )
+        total_bars += bar_count
+        print(f"[{idx:2d}/{total}] {code} ({etf['name']}): done ({source}), {bar_count} bars  "
+              f"{bars[0].trade_date} ~ {bars[-1].trade_date}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     successful = total - len(failures)

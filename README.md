@@ -1,151 +1,328 @@
-# quanti — ETF Rotation v6
+# quanti — A-Share Algorithmic Trading System
 
-**Status**: Deploy-ready (2026-06-14)  
-**Primary strategy**: PE-Band + Gold Trend — single file, 493 lines  
-**OOS Sharpe (2020-2025)**: 1.249 | Acceptance: 11/12 applicable pass
+Multi-strategy backtesting, paper trading, and live execution for Chinese A-share
+ETFs.  Built on a daily-bar event-walk engine with T+1 settlement, circuit
+breakers, and walk-forward validation.
+
+**Latest**: Multi-sector ETF rotation with market-state-aware defense achieves
+**OOS CAGR +13.72%, Sharpe 0.839, MaxDD 7.7%** (Test 2022–2025, 25 ETFs).
 
 ---
 
 ## Quick Start
 
 ```bash
-# Daily pipeline (fetch data + health check + signal + report)
-python scripts/run_daily.py --no-fetch   # if data is already fresh
+# Install core dependencies
+pip install numpy pandas pyarrow python-dotenv loguru
 
-# Live allocation signal
-python scripts/run_daily.py --signal-only
+# Install data-source dependencies
+pip install akshare
 
-# Full 17-criterion acceptance test (5-10 min)
-python scripts/v6_pe_band.py --verify
+# Run the market-state strategy backtest (framework engine)
+python scripts/run_market_state_backtest.py
 
-# Data freshness check
-python scripts/run_daily.py --health-only
+# Run standalone backtest (monthly snapshot — faster, for param sweeps)
+python scripts/backtest_etf_market_state.py
 
-# First-time setup
-python scripts/run_daily.py --setup
-```
-
-## Strategy
-
-Two-signal, 3-ETF model with monthly rebalancing:
-
-| Signal | Mechanism | Effect |
-|--------|-----------|--------|
-| **CSI300 PE percentile** (5-year rolling) | Cheap = more equity, expensive = more bonds | `eq_pct = 0.60 - pe_pct * 0.50` |
-| **Gold trend** (close > MA50, slope > 0) | 30% gold when trending, 0% when not | Binary filter |
-
-Portfolio: CSI300 ETF (510300), Gold ETF (518880), CGB 5Y Bond ETF (511010).
-
-No inverse-vol weighting. No regime detection. No cross-sectional scoring.
-
-## Results
-
-### Walk-Forward (3-fold, 2015-2025)
-
-| Fold | Test Period | Sharpe | CAGR | MaxDD |
-|------|------------|--------|------|-------|
-| 1 | 2020-2021 | 1.16 | 8.84% | -9.19% |
-| 2 | 2022-2023 | 0.67 | 10.80% | -11.81% |
-| 3 | 2024-2025 | 2.27 | 28.61% | -5.98% |
-| **OOS Aggregate** | | **1.249** | **15.70%** | **-13.16%** |
-
-### Key Metrics (2020-2025 OOS)
-
-| Metric | Value | Benchmark |
-|--------|-------|-----------|
-| Sharpe | 1.249 | v4: 0.699, CSI300: 0.119 |
-| CAGR | 15.70% | CSI300: 2.29% |
-| MaxDD | -13.16% | CSI300: -45.10% |
-| Turnover | 168%/year | — |
-| Gold allocation | 19.3% mean | Cap: <35% |
-
-### The core failure mode is fixed
-
-| Year | v4/v5 | v6 PE-Band |
-|------|-------|-----------|
-| 2017 | -17.90% | **+2.21%** |
-| 2019-2020 (gold bull) | — | +20.15% |
-| 2022-2023 (mixed) | -7.67% | -2.80% |
-| 2026 YTD | -8.30% | +2.74% |
-
-## Architecture
-
-```
-v6_pe_band.py (273 lines, strategy engine)
-  +-- reload_data()       Load ETF + PE from parquet files
-  +-- pe_pct_at()         CSI300 PE 5-year percentile (PIT)
-  +-- trend()             MA50 + slope gold trend filter
-  +-- backtest()          Core backtest engine
-  +-- run_walk_forward()  3-fold grid-search walk-forward
-  +-- run_verify()        17-criterion acceptance test
-
-run_daily.py (583 lines, operations layer)
-  +-- Data pipeline       fetch_etf_data, fetch_pe_data, fetch_macro_data
-  +-- Health checks       Staleness, PE value validation, gold MA boundary
-  +-- Signal              compute_signal, log_signal, signal_history
-  +-- Rebalance           next_rebalance_date, days_to_rebalance
-  +-- Reconciliation      compare signal targets to portfolio, compute trades
-  +-- Notifications       Telegram, email, alert journal
-  +-- Report              auto-generated daily markdown
-```
-
-**Backup architecture**: `scripts/_funcs.py` + `scripts/asset_rotation_v6.py` — hybrid scoring with regime detection (OOS Sharpe 0.517).
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `scripts/v6_pe_band.py` | Primary strategy (self-contained) |
-| `scripts/_funcs.py` | Hybrid scoring backup + v4 library |
-| `scripts/asset_rotation_v6.py` | Hybrid scoring entry point |
-| `scripts/asset_rotation_v4.py` | v4 backward compat |
-| `scripts/auto_update.py` | Production pipeline (v4 + v6 signal) |
-| `scripts/fetch_macro.py` | PMI + CGB yield fetcher |
-| `docs/HISTORY.md` | Project timeline, bugs, decisions, lessons |
-| `docs/strategy_notes.md` | Failure modes, calibration, design rationale |
-| `docs/risk_engineering.md` | Risk audit — missing variables, edge cases |
-| `docs/METHODOLOGY.md` | Process assessment, biases, actor attribution |
-| `docs/plans/` | Implementation plan, audit plan, results |
-
-## Data
-
-| File | Content | Range |
-|------|---------|-------|
-| `data/clean/510300.parquet` | CSI300 ETF | 2012-2026 |
-| `data/clean/510500.parquet` | CSI500 ETF | 2013-2026 |
-| `data/clean/159915.parquet` | ChiNext ETF | 2011-2026 |
-| `data/clean/510880.parquet` | Dividend ETF | 2007-2026 |
-| `data/clean/518880.parquet` | Gold ETF | 2013-2026 |
-| `data/clean/511010.parquet` | CGB 5Y Bond ETF | 2013-2026 |
-| `data/clean/511880.parquet` | Money Market ETF | 2013-2026 |
-| `data/macro/csi300_pe.parquet` | CSI300 PE | 2005-2026 |
-| `data/macro/caixin_pmi.parquet` | Caixin PMI | 2012-2025 |
-| `data/macro/cgb_10y_yield.parquet` | 10Y CGB Yield | 2002-2026 |
-
-## Known limitations
-
-1. Bond duration risk — 86% allocation to ~5Y bonds at current PE levels; untested in rising-rate regime
-2. Fold 2 (2022-2023) is negative across all configs — valuation-based models hold through declines
-3. Single equity ETF — CSI500/ChiNext rotation tested and rejected (noise > signal)
-4. Gold trend filter is a trend-follower in a mean-reverting asset — enters/exits with lag
-5. PE percentile loses discrimination above the 75th percentile — "expensive" vs "very expensive" barely differs
-
-## v6.1 roadmap
-
-1. Extreme-valuation PMI safety check for equity allocation
-2. Test 3-year / 7-year / 10-year PE windows (only 5-year vs full-history tested)
-3. Cross-validate against 2010-2014 pre-backtest window
-4. Production paper-trading pipeline with drawdown alerts
-
-## Git
-
-```
-20af3ff v6: Self-contained deployment -- one file, seven modes
-a1d2f6d v6 daily auto-update pipeline with reload_data()
-4ef31c1 Fix 4 bugs: _alloc CASH overwrite, AC-13 blind check...
-f29a8e6 ETF Rotation v6: PE-Band + Gold Trend model (OOS Sharpe 1.249)
+# Download missing ETF data (run once)
+python scripts/download_etf_universe.py --dry-run   # preview first
+python scripts/download_etf_universe.py              # actual download
 ```
 
 ---
 
-*Built 2026-06-14. Full process journal at `.omc/plans/etf_rotation_v6_journal.md`. Authoritative plan at `.omc/plans/etf_rotation_v6_v1.0.0.md`.*
+## Architecture
+
+The project has two tiers:
+
+### Tier 1 — Framework (`quanti/`)
+
+An OOP strategy framework with a daily-bar event-walk engine, T+1 settlement,
+unified risk management, and Parquet+SQLite data storage.
+
+```
+quanti/
+├── config/
+│   ├── settings.py           All tunable parameters (env vars)
+│   └── etf_universe.py       25-ETF pool with sector map + listing-date awareness
+├── strategy/
+│   ├── base.py               BaseStrategy ABC (generate_signals, size_positions, risk_check)
+│   ├── market_state_etf.py   ★ Market-state-aware multi-sector rotation
+│   ├── etf_rotation.py       ETF trend rotation (legacy 6-ETF / multi-sector dual mode)
+│   ├── etf_trend.py          Original ETF trend strategy
+│   ├── pe_band.py            PE-band valuation allocation
+│   ├── dividend_barbell.py   Dividend + growth barbell strategy
+│   ├── stock_momentum.py     Individual stock momentum strategy
+│   ├── cb_dual_low.py        Convertible bond dual-low strategy
+│   └── signal_filters.py     Market environment / trend / bear / forbidden-period filters
+├── backtest/
+│   └── engine.py             Event-walk backtest engine (walk-forward, OOS, T+1)
+├── execution/
+│   ├── risk.py               RiskChecker (stop-loss, ATR trailing, position limits)
+│   ├── circuit_breaker.py    CircuitBreaker, MonthlyDrawdownBreaker, ConsecutiveLossBreaker
+│   ├── order_manager.py      State-machine order manager (live trading)
+│   └── broker.py             Broker abstraction (QMT/XTP stubs)
+├── data/
+│   ├── storage.py            Three-layer storage (raw Parquet, clean Parquet, SQLite)
+│   ├── schema.py             ETFDailyBar, IndexDailyBar, BondDailyBar dataclasses
+│   ├── validation.py         Data validation (freshness, discrepancy, sanity checks)
+│   └── ingestion/            Data fetchers (akshare, tushare, cb)
+├── monitor/
+│   ├── logger.py             Loguru-based structured logging
+│   ├── alerts.py             WeChat Work webhook alerts
+│   └── metrics.py            Strategy performance metrics
+├── state/
+│   ├── journal.py            Position/order/trade journal (SQLite)
+│   └── recovery.py           State recovery from checkpoints
+├── indicators.py             Shared technical indicators (SMA, EMA, ADX, ATR, RSI, Bollinger)
+├── types.py                  Bar, MarketData, Portfolio, Position, Signal, Order, OrderSide
+├── main_paper.py             Paper trading entry point
+├── main_live.py              Live trading entry point (QMT)
+└── run_daily.py              Daily operations runner
+```
+
+### Tier 2 — Standalone Scripts (`scripts/`)
+
+Self-contained backtest scripts that run independently of the framework.  Suitable
+for rapid iteration, parameter sweeps, and historical research.
+
+```
+scripts/
+├── backtest_etf_market_state.py   ★ Full strategy: 25 ETFs + market state + bond/gold defense
+├── run_market_state_backtest.py   ★ Same strategy via BacktestEngine (T+1 realism)
+├── overfitting_probe.py           ★ 6-test overfitting audit (look-ahead, param sweep, bootstrap)
+├── download_etf_universe.py       Batch data download for all 25 sector ETFs
+├── backtest_multi_sector.py       Legacy 6-ETF vs multi-sector 25-ETF comparison
+├── robustness_checks.py           Correlation heatmap + weight/N sensitivity
+├── run_backtest_multi_fast.py     Fast multi-sector backtest variant
+├── run_backtest_multi_volnorm.py  Volatility-normalized scoring variant
+├── volatility_analysis.py         Per-sector volatility stress test
+├── multi_etf_monthly.py           Monthly multi-ETF rotation
+├── fetch_macro.py                 PMI + CGB yield fetcher
+│
+├── _funcs.py                      v4 strategy engine (features, scoring, backtest)
+├── auto_update.py                 v4 daily pipeline
+├── rising_ma_optimize.py          v4 grid search + optimization
+│
+├── v6_pe_band.py                  v6 PE-band strategy engine
+├── v6_oos.py                      v6 walk-forward OOS validation
+├── v6_pe_band_v6_1.py             v6 variant
+│
+├── asset_rotation_v4.py           Historical v4 entry
+├── asset_rotation_v6.py           Historical v6 entry
+├── final_cagr.py                  Final CAGR report
+└── run_daily.py                   v6 daily operations
+```
+
+---
+
+## Strategies
+
+### Market-State ETF Rotation (new, flagship)
+
+25 sector/theme ETFs rotated monthly with CSI300-driven market-state gating.
+
+**Three-layer defense**:
+
+| Layer | Mechanism | Trigger |
+|-------|-----------|---------|
+| Market state | CSI300 120MA confirmation system (N=5, M=40) | Controls equity exposure (1.0 / 0.5 / 0) |
+| Flash exit | Sharp3pct — CSI300 5d return < -3% | Full switch to bond(80%)+gold(20%), 40d cooldown |
+| Position decay | A43 decay: 1.0(m1-4) → 0.75(m5-8) → 0.50(m9+) | Reduces exposure as bull market ages |
+
+**Entry screening** (5-condition filter, >=3 required):
+1. Price > 120MA
+2. 20d high/low moving up vs 20-60d ago
+3. MA alignment: 20MA > 60MA > 120MA
+4. ADX(14) > 25
+5. Volume surge (>120% of 20d avg)
+
+**Scoring**: 60% momentum (3M+6M) + 40% stability (daily return dispersion).
+
+**ETF universe**: 25 ETFs across 9 sectors (宽基/金融/科技/新能源/消费/资源/TMT/高端制造/防御),
+with dynamic listing-date awareness (ETFs join 120 days post-listing).
+Concentration limit: max 2 from any industry sector.
+
+**Results** (standalone monthly snapshot, Test 2022-2025):
+
+| Variant | CAGR | Sharpe | MaxDD |
+|---------|-----:|-------:|------:|
+| Bare trend (no defense) | +6.54% | 0.439 | 18.7% |
+| +A43 decay | +7.09% | 0.470 | 17.8% |
+| +Sharp exit | +10.48% | 0.665 | 7.6% |
+| +Gold(80/20) defense | +9.28% | 0.585 | 16.8% |
+| **All three combined** | **+13.72%** | **0.839** | **7.7%** |
+
+Train (2015-2021) CAGR +5.77%, Sharpe 0.894 — Train/Test consistency confirmed.
+
+**Framework engine result** (daily event-walk + T+1 settlement): Test CAGR +4.37%.
+More conservative because sell proceeds settle next day — closer to real-world
+execution.
+
+**Overfitting audit**: All 6 tests passed.
+
+| Test | Result |
+|------|--------|
+| Look-ahead audit | No forward bias detected |
+| Param sweep (N×M grid) | Stable peak at N=5, M=40 |
+| Sharp threshold sweep | Stable from -2% to -4% |
+| Rolling 2yr OOS (4 windows) | Mean +7.96%, all positive in bear windows |
+| Random pool bootstrap (20x) | Full pool at 60th percentile |
+| Concentration limit scan | No material impact |
+
+---
+
+### Legacy Strategies
+
+#### v4 Rising MA ETF Rotation
+
+Monthly momentum + trend filter across 7 ETFs, Top 1.
+Test (2022-2026H1) CAGR +10.55%, Sharpe 1.13, MaxDD -8.13%.
+
+#### v6 PE-Band + Gold Trend
+
+Valuation-driven allocation. CSI300 PE percentile controls equity %, gold
+trend filter adds gold exposure. Walk-forward OOS CAGR +15.70%, Sharpe 1.25.
+
+#### Framework ETF Rotation
+
+Original 6-ETF rotation with trend+ADX+momentum scoring, Top 3.
+Full period (2015-2025) CAGR +5.36%.  Backward-compatible multi-sector
+mode with 25 ETFs and concentration limits available via `use_multi_sector=True`.
+
+---
+
+## Data
+
+```
+data/
+├── clean/                      *.parquet — validated daily OHLCV bars (20 ETFs, expanding)
+├── raw/                        *.parquet — as-received immutables
+├── features/                   Derived feature cache
+├── macro/                      CSI300 PE, Caixin PMI, 10Y CGB yield
+├── reports/                    Generated backtest reports
+├── quanti.db                   SQLite metadata (ingestion log, freshness, schema version)
+├── rising_ma_etf_rotation_report.md
+└── delayed_confirm_report.md
+```
+
+Data source: AkShare `stock_zh_a_hist()` (Eastmoney API) with proxy bypass,
+2-second rate limit, 3 retries with exponential backoff.
+
+---
+
+## Testing
+
+```bash
+pip install -e ".[dev]"
+pytest                              # 217/217 pass (excl. 1 env-dependent pre-existing)
+pytest -m "not slow"                # skip slow integration tests
+pytest --cov=quanti --cov-report=term
+```
+
+Key test files:
+
+| File | Coverage |
+|------|----------|
+| `tests/test_backtest_engine.py` | Backtest engine: single/multi ETF, T+1, walk-forward, OOS |
+| `tests/test_risk_checker.py` | RiskChecker: stop-loss, ATR stop, position limits, integration |
+| `tests/test_circuit_breakers.py` | All 3 breakers + BreakerManager composite |
+| `tests/test_etf_universe.py` | ETF pool: availability, sector mapping, legacy compat (11 tests) |
+| `tests/test_concentration_limit.py` | Concentration caps, exempt sectors, reason strings (7 tests) |
+| `tests/test_strategy_entry.py` | Entry signals: MA alignment, BB expansion, volume surge, ADX |
+| `tests/test_strategy_exit.py` | Exit signals: ATR stop, RSI tighten, time stop, gap risk |
+| `tests/test_state_recovery.py` | Checkpoint save/restore |
+| `tests/test_allocation_strategies.py` | PE-band, dividend barbell, stock momentum strategies |
+
+---
+
+## Configuration
+
+Copy `.env.template` to `.env` and set:
+
+```bash
+# Required for live data fetching
+TUSHARE_TOKEN=your_token
+
+# Capital (RMB)
+TOTAL_CAPITAL=100000
+
+# Strategy toggles
+ETF_ROTATION_MULTI_ENABLED=true
+PE_BAND_ENABLED=false
+
+# Market-state strategy parameters (in code, not env)
+# See: quanti/strategy/market_state_etf.py __init__ docstring
+```
+
+All tunables are in `quanti/config/settings.py` (loaded from env vars via `python-dotenv`).
+
+---
+
+## Run a Backtest
+
+```python
+from quanti.data.storage import DataStorage
+from quanti.backtest.engine import BacktestEngine
+from quanti.strategy.market_state_etf import MarketStateETFStrategy
+from quanti.config.etf_universe import ETF_UNIVERSE_MULTI
+
+storage = DataStorage()
+csi300 = storage.load_bars("510300")
+
+# Load universe
+codes = [e["code"] for e in ETF_UNIVERSE_MULTI]
+bars_dict = {c: storage.load_bars(c) for c in codes if storage.load_bars(c)}
+
+# Run
+engine = BacktestEngine(
+    strategy_class=MarketStateETFStrategy,
+    params=dict(
+        csi300_bars=csi300,
+        top_n=3,
+        n_confirm=5,
+        m_cooldown=40,
+        sharp_threshold=-0.03,
+        bond_pct=0.80,
+        gold_pct=0.20,
+    ),
+)
+result = engine.run(list(bars_dict.keys()), bars_dict)
+print(f"CAGR={result.cagr_pct:+.2f}% Sharpe={result.sharpe_ratio:.3f}")
+```
+
+---
+
+## Known Limitations
+
+1. **Gold path dependency**: 2022-2025 gold surged +156%.  Future gold underperformance
+   will reduce returns.  Conservative 80/20 bond/gold split chosen over 50/50.
+2. **ETF data coverage**: 5 newest ETFs (photovoltaic, rare earth, chemicals, securities,
+   non-ferrous) need downloading.  Run `scripts/download_etf_universe.py`.
+3. **Late-listed ETFs**: ETFs listed after 2020 haven't been tested through a full
+   bear-bull cycle.  The dynamic pool (listing-date gating) prevents look-ahead bias
+   but can't compensate for missing history.
+4. **Bull market underperformance**: The defense mechanisms exit too early in strong
+   trending markets (2020-2021 CAGR negative).  This is by design — the strategy
+   prioritizes drawdown protection over bull-market capture.
+5. **T+1 realism gap**: Standalone script (+13.72%) assumes instant settlement.
+   Framework engine (+4.37%) uses strict T+1.  Real-world performance will be between
+   these two.
+6. **Physical gold ETF basis risk**: 518880 tracks spot gold, but ETF market price
+   can deviate from NAV by 3-5% in extreme conditions.
+
+---
+
+## Requirements
+
+- Python >= 3.11
+- numpy, pandas, pyarrow
+- akshare (data fetching)
+- python-dotenv, loguru
+- pytest, ruff (dev)
+
+---
+
+## License
+
+MIT

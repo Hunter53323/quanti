@@ -21,6 +21,28 @@ ETF_UNIVERSE_EXTENDED = os.getenv(
     "510300,510500,159915,510880,518880,511880"
 ).split(",")
 
+# --- Strategy: ETF Rotation Multi-Industry ---
+ETF_ROTATION_MULTI_ENABLED = os.getenv("ETF_ROTATION_MULTI_ENABLED", "false").lower() == "true"
+ETF_ROTATION_MULTI_UNIVERSE = os.getenv(
+    "ETF_ROTATION_MULTI_UNIVERSE",
+    "510300,510500,159915,588000,512000,512800,512480,515070,515880,512720,"
+    "516160,516880,516110,159928,512010,159825,516810,516310,516320,"
+    "512980,159869,512660,510880,518880,511880"
+).split(",")
+ETF_ROTATION_MULTI_TOP_N = int(os.getenv("ETF_ROTATION_MULTI_TOP_N", "3"))
+ETF_ROTATION_MULTI_MAX_PER_CATEGORY = int(os.getenv("ETF_ROTATION_MULTI_MAX_PER_CATEGORY", "2"))
+
+# ETF Rotation Multi -- Volatility Normalization
+ETF_ROTATION_VOL_NORMALIZE = os.getenv("ETF_ROTATION_VOL_NORMALIZE", "true").lower() == "true"
+ETF_ROTATION_VOL_LOOKBACK = int(os.getenv("ETF_ROTATION_VOL_LOOKBACK", "60"))
+
+# ETF Rotation Multi -- Category-Specific Risk Overrides
+# Based on volatility stress test (Phase 4.1): -10% HWM stop triggers on 50-83% of
+# rolling windows for equity sector ETFs. Category-specific stops reduce noise exits.
+# Format: JSON dict with category -> {"hwm_stop_pct": N}
+# Example: {"Tech": {"hwm_stop_pct": 15}, "Defensive": {"hwm_stop_pct": 8}}
+ETF_ROTATION_CATEGORY_RISK_OVERRIDES = os.getenv("ETF_ROTATION_CATEGORY_RISK_OVERRIDES", "")
+
 # --- PE-Band Dynamic Allocation ---
 PE_BAND_ENABLED = os.getenv("PE_BAND_ENABLED", "false").lower() == "true"
 PE_BAND_SOURCE_INDEX = os.getenv("PE_BAND_SOURCE_INDEX", "000300.SH")

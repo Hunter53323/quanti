@@ -33,7 +33,7 @@ class AkShareETFetcher:
         s = symbol.replace(".SH", "").replace(".SZ", "").replace(".sh", "").replace(".sz", "")
         if s.startswith(("sh", "sz")):
             return s
-        prefix = "sh" if s.startswith(("51", "60")) else "sz"
+        prefix = "sh" if s.startswith(("51", "58", "60")) else "sz"
         return prefix + s
 
     @staticmethod

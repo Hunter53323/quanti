@@ -131,6 +131,16 @@ Scripts like `asset_rotation_v4.py` and `delayed_confirm_backtest.py` duplicate 
 ### 10. Strategy __init__.py controls the public API surface
 `quanti/strategy/__init__.py` exports `ETFTrendStrategy`, `PEBandAllocation`, `DividendBarbell`, `MarketEnvironmentFilter`. Strategies not listed there (e.g., `ETFRotationStrategy`) are imported directly by their module path.
 
+### 11. Diff-test before trust (mandatory validation gate)
+When any new function, class, or module replaces existing inline logic, validate it against the reference implementation with identical inputs before trusting its output or committing it. "Produces plausible numbers" is insufficient. "Produces bit-identical outputs to the code it replaces" is the standard.
+
+```python
+ref = old_code(data); new = new_code(data)
+assert np.allclose(ref, new), "diverges from reference"
+```
+
+Applies to: backtest engines, scoring functions, data loaders, indicator implementations, and any utility that claims to replicate existing behavior. Failure example: `omc_utils.run_backtest` defaulted `min_score=0.25` while the inline scripts it replaced had no threshold, producing a 1.33% CAGR gap that was only caught hours later. This is not advisory.
+
 ---
 
 ## Entry Strategy: ETFTrendStrategy

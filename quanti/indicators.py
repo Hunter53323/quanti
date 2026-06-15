@@ -10,6 +10,7 @@ dependencies on settings or global state.
 Exported functions:
   sma, ema, wilder_smooth
   adx, adx_with_di
+  macd, kdj
   bollinger_bands
   compute_atr, compute_rsi
 """
@@ -120,6 +121,69 @@ def adx_with_di(high: np.ndarray, low: np.ndarray, close: np.ndarray,
     adx_arr = wilder_smooth(dx, period)
 
     return (adx_arr, plus_di, minus_di)
+
+
+# ---- MACD ----
+
+def macd(closes: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9
+         ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """
+    MACD (Moving Average Convergence Divergence).
+
+    Returns (dif, dea, histogram) arrays, or None if insufficient data.
+    DIF = EMA(fast) - EMA(slow)
+    DEA = EMA(DIF, signal) -- uses NaN-to-0 fill on DIF to prevent
+          NaN propagation (matching legacy server behavior).
+    Histogram = (DIF - DEA) * 2
+    """
+    if len(closes) < slow:
+        return None
+
+    dif = ema(closes, fast) - ema(closes, slow)
+
+    # DEA: replace NaN in DIF with 0 so the EMA seed is valid (matches
+    # the existing _macd() in server/main.py).
+    dif_clean = np.where(np.isnan(dif), 0.0, dif)
+    dea = ema(dif_clean, signal)
+
+    histogram = (dif - dea) * 2
+    return (dif, dea, histogram)
+
+
+# ---- KDJ ----
+
+def kdj(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, n: int = 9
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """
+    KDJ indicator (stochastic oscillator variant).
+
+    Returns (k, d, j) arrays, or None if insufficient data.
+    RSV uses a rolling window of *n* periods.
+    First ``n-1`` elements are NaN.  Seed at index ``n-1``: K=D=J=50.
+    Then K = 2/3*K_prev + 1/3*RSV,  D = 2/3*D_prev + 1/3*K,  J = 3*K - 2*D.
+    """
+    if len(closes) < n:
+        return None
+
+    k = np.full_like(closes, np.nan, dtype=np.float64)
+    d = np.full_like(closes, np.nan, dtype=np.float64)
+    j = np.full_like(closes, np.nan, dtype=np.float64)
+
+    k_prev = 50.0
+    d_prev = 50.0
+
+    for i in range(n - 1, len(closes)):
+        hh = float(np.max(highs[i - n + 1: i + 1]))
+        ll = float(np.min(lows[i - n + 1: i + 1]))
+        rsv = (closes[i] - ll) / (hh - ll) * 100.0 if hh != ll else 50.0
+
+        k[i] = 2.0 / 3.0 * k_prev + 1.0 / 3.0 * rsv
+        d[i] = 2.0 / 3.0 * d_prev + 1.0 / 3.0 * k[i]
+        j[i] = 3.0 * k[i] - 2.0 * d[i]
+        k_prev = k[i]
+        d_prev = d[i]
+
+    return (k, d, j)
 
 
 # ---- Bollinger Bands ----

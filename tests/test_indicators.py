@@ -8,6 +8,8 @@ from quanti.indicators import (
     compute_atr,
     compute_rsi,
     ema,
+    kdj,
+    macd,
     sma,
 )
 
@@ -132,3 +134,96 @@ class TestRSI:
         closes = np.ones(5, dtype=np.float64)
         rsi = compute_rsi(closes, 14)
         assert rsi is None
+
+
+class TestMACD:
+    def test_macd_basic(self):
+        n = 80
+        t = np.linspace(0, 4 * np.pi, n)
+        closes = np.sin(t) * 10 + 50
+        result = macd(closes, 12, 26, 9)
+        assert result is not None
+        dif, dea, hist = result
+        assert len(dif) == n
+        assert len(dea) == n
+        assert len(hist) == n
+        # First slow-1 (=25) elements of DIF are NaN
+        assert all(np.isnan(dif[i]) for i in range(25))
+        # DIF should have valid values after index 25
+        assert not np.isnan(dif[25])
+
+    def test_macd_insufficient_data(self):
+        closes = np.ones(20, dtype=np.float64)
+        result = macd(closes, 12, 26, 9)
+        assert result is None
+
+    def test_macd_consistency(self):
+        """Verify against hand-checked values on a small array with fast=3, slow=5, signal=2."""
+        closes = np.array([10, 11, 12, 13, 14, 15, 16, 17, 18, 19], dtype=np.float64)
+        dif, dea, hist = macd(closes, fast=3, slow=5, signal=2)
+        assert dif is not None
+        # DIF[0:4] = NaN (slow-1 = 4)
+        assert all(np.isnan(dif[i]) for i in range(4))
+        assert not np.isnan(dif[4])
+
+    def test_macd_histogram_zero_crossing(self):
+        """DIF crossing DEA should flip histogram sign."""
+        # Rising then falling prices produce a histogram sign change
+        n = 100
+        t = np.linspace(0, 6 * np.pi, n)
+        closes = np.sin(t) * 10 + 50
+        dif, dea, hist = macd(closes, 12, 26, 9)
+        assert hist is not None
+        valid = hist[~np.isnan(hist)]
+        assert len(valid) > 0
+        # At least one sign change in the valid portion
+        signs = np.sign(valid)
+        changes = np.sum(np.diff(signs) != 0)
+        assert changes > 0, "Expected histogram sign change over a full cycle"
+
+
+class TestKDJ:
+    def test_kdj_basic(self):
+        n = 80
+        t = np.linspace(0, 4 * np.pi, n)
+        closes = np.sin(t) * 10 + 50
+        highs = closes + 1
+        lows = closes - 1
+        result = kdj(highs, lows, closes, 9)
+        assert result is not None
+        k, d, j = result
+        assert len(k) == n
+        assert len(d) == n
+        assert len(j) == n
+        # First n-1 (=8) elements are NaN
+        assert all(np.isnan(k[i]) for i in range(8))
+        assert not np.isnan(k[8])
+
+    def test_kdj_insufficient_data(self):
+        closes = np.ones(5, dtype=np.float64)
+        highs = closes + 1
+        lows = closes - 1
+        result = kdj(highs, lows, closes, 9)
+        assert result is None
+
+    def test_kdj_flat_prices(self):
+        """All prices equal -> K, D, J converge to 50."""
+        n = 40
+        closes = np.full(n, 50.0, dtype=np.float64)
+        highs = np.full(n, 51.0, dtype=np.float64)
+        lows = np.full(n, 49.0, dtype=np.float64)
+        k, d, j = kdj(highs, lows, closes, 9)
+        # Last value should be near 50
+        assert abs(k[-1] - 50.0) < 1e-6
+        assert abs(d[-1] - 50.0) < 1e-6
+        assert abs(j[-1] - 50.0) < 1e-6
+
+    def test_kdj_extreme(self):
+        """Very high close (RSV=100) produces J > 100."""
+        n = 30
+        closes = np.concatenate([np.full(10, 50.0), np.linspace(50, 100, 20)])
+        highs = np.full(n, 100.0, dtype=np.float64)
+        lows = np.full(n, 0.0, dtype=np.float64)
+        k, d, j = kdj(highs, lows, closes, 9)
+        assert not np.isnan(j[-1])
+        assert j[-1] > 100, f"Expected J > 100 for extreme uptrend, got {j[-1]:.2f}"

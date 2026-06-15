@@ -20,6 +20,7 @@ from quanti.types import MarketData, Portfolio, Signal, Order, OrderSide, Bar
 from quanti.strategy.base import BaseStrategy
 from quanti.config import settings
 from quanti.config.etf_universe import get_available_etfs, get_sector, ETF_UNIVERSE_LEGACY
+from quanti.indicators import macd, kdj
 
 
 class ETFRotationStrategy(BaseStrategy):
@@ -33,6 +34,14 @@ class ETFRotationStrategy(BaseStrategy):
         Period for the SMA used in trend scoring (default 120).
     w_trend, w_adx, w_momentum : float
         Composite score weights (default 0.35, 0.40, 0.25).
+    w_macd, w_kdj : float
+        Optional MACD/KDJ weights (default 0.0 each). Set to non-zero to opt into
+        multi-factor scoring. MACD and KDJ parameters below only take effect when
+        these weights are non-zero.
+    macd_fast, macd_slow, macd_signal_period : int
+        MACD parameters (default 12, 26, 9).
+    kdj_n : int
+        KDJ period (default 9).
     dd_exit_pct : float
         Maximum drawdown before full exit (default 15.0).
     equity_mandate : bool
@@ -57,20 +66,34 @@ class ETFRotationStrategy(BaseStrategy):
         w_trend: float = 0.35,
         w_adx: float = 0.40,
         w_momentum: float = 0.25,
+        w_macd: float = 0.0,
+        w_kdj: float = 0.0,
+        macd_fast: int = 12,
+        macd_slow: int = 26,
+        macd_signal_period: int = 9,
+        kdj_n: int = 9,
         dd_exit_pct: float = 15.0,
         equity_mandate: bool = False,
         use_multi_sector: bool = True,
         max_per_sector: int = 2,
+        min_score: float = 0.30,
     ):
         self.top_n = top_n
         self.ma_period = ma_period
         self.w_trend = w_trend
         self.w_adx = w_adx
         self.w_momentum = w_momentum
+        self.w_macd = w_macd
+        self.w_kdj = w_kdj
+        self.macd_fast = macd_fast
+        self.macd_slow = macd_slow
+        self.macd_signal_period = macd_signal_period
+        self.kdj_n = kdj_n
         self.dd_exit_pct = dd_exit_pct
         self.equity_mandate = equity_mandate
         self.use_multi_sector = use_multi_sector
         self.max_per_sector = max_per_sector
+        self.min_score = min_score
 
         self._max_equity: float = 0.0
         self._dd_exit_active: bool = False
@@ -113,14 +136,20 @@ class ETFRotationStrategy(BaseStrategy):
 
         scored.sort(key=lambda x: x[1], reverse=True)
 
+        # --- Minimum quality gate: only select ETFs that score above threshold ---
+        passing = [(s, sc, r) for s, sc, r in scored if sc >= self.min_score]
+        self._last_scores = {s[0]: s[1] for s in scored[:20]}
+
+        if not passing:
+            return signals  # No ETF is strong enough → stay in cash
+
         # --- Select ---
         if self.use_multi_sector:
-            selected, sector_counts = self._select_with_concentration(scored)
+            selected, sector_counts = self._select_with_concentration(passing)
             self._sector_counts = sector_counts
-            self._last_scores = {s[0]: s[1] for s in scored[:20]}
 
             for sym in selected:
-                score = next(s[1] for s in scored if s[0] == sym)
+                score = next(s[1] for s in passing if s[0] == sym)
                 sector = get_sector(sym)
                 signals.append(Signal(
                     symbol=sym,
@@ -130,33 +159,32 @@ class ETFRotationStrategy(BaseStrategy):
                 ))
         else:
             # --- Legacy: simple top-N with optional equity mandate ---
-            selected = {s[0] for s in scored[: self.top_n]}
+            selected = {s[0] for s in passing[: self.top_n]}
 
             # Equity mandate: force at least one 宽基 ETF when all are rising
-            if self.equity_mandate:
+            if self.equity_mandate and len(selected) > 0:
                 equity_etfs = {"510300", "510500", "159915"}
                 equity_rising = all(
-                    any(s[0] == e and s[2] for s in scored)
+                    any(s[0] == e and s[2] for s in passing)
                     for e in equity_etfs
                 )
                 if equity_rising and not (selected & equity_etfs):
                     best_eq = max(
-                        (s for s in scored if s[0] in equity_etfs),
+                        (s for s in passing if s[0] in equity_etfs),
                         key=lambda x: x[1], default=None,
                     )
                     if best_eq:
                         worst_in = min(
-                            (s for s in scored[: self.top_n] if s[0] in selected),
+                            (s for s in passing[: self.top_n] if s[0] in selected),
                             key=lambda x: x[1],
                         )
                         selected.discard(worst_in[0])
                         selected.add(best_eq[0])
 
-            self._last_scores = {s[0]: s[1] for s in scored[:20]}
             self._sector_counts = {}
 
             for sym in selected:
-                score = next(s[1] for s in scored if s[0] == sym)
+                score = next(s[1] for s in passing if s[0] == sym)
                 signals.append(Signal(
                     symbol=sym,
                     side=OrderSide.BUY,
@@ -324,7 +352,99 @@ class ETFRotationStrategy(BaseStrategy):
         else:
             mom = 0.5
 
-        return 0.35 * trend + 0.40 * adx_val + 0.25 * mom
+        # MACD signal
+        macd_sig = self._macd_signal(
+            closes, self.macd_fast, self.macd_slow, self.macd_signal_period)
+
+        # KDJ signal
+        kdj_sig = self._kdj_signal(highs, lows, closes, self.kdj_n)
+
+        return (self.w_trend * trend + self.w_adx * adx_val +
+                self.w_momentum * mom + self.w_macd * macd_sig +
+                self.w_kdj * kdj_sig)
+
+    @staticmethod
+    def _macd_signal(closes: np.ndarray, fast: int, slow: int, signal_period: int) -> float:
+        """MACD binary signal: 1 if histogram positive and rising over ~5 bars, else 0."""
+        result = macd(closes, fast, slow, signal_period)
+        if result is None:
+            return 0.0
+        _dif, _dea, hist = result
+
+        if np.isnan(hist[-1]):
+            return 0.0
+        if len(hist) < signal_period + 5:
+            return 0.0
+        # Enough valid bars to check the 5-bar comparison
+        valid_count = np.sum(~np.isnan(hist))
+        if valid_count < 6:
+            return 0.0
+        return 1.0 if (hist[-1] > 0.0 and hist[-1] > hist[-6]) else 0.0
+
+    @staticmethod
+    def _kdj_signal(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, n: int) -> float:
+        """KDJ binary signal: 1 if K > D and J < 80 (not overbought), else 0."""
+        result = kdj(highs, lows, closes, n)
+        if result is None:
+            return 0.0
+        k_arr, d_arr, j_arr = result
+
+        if np.isnan(k_arr[-1]) or np.isnan(d_arr[-1]) or np.isnan(j_arr[-1]):
+            return 0.0
+        return 1.0 if (k_arr[-1] > d_arr[-1] and j_arr[-1] < 80.0) else 0.0
+
+    @staticmethod
+    def compute_scores(
+        closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
+        w_trend: float, w_adx: float, w_momentum: float,
+        w_macd: float, w_kdj: float,
+        ma_period: int = 120,
+        macd_fast: int = 12, macd_slow: int = 26, macd_signal_period: int = 9,
+        kdj_n: int = 9,
+    ) -> dict:
+        """Pure-function composite scoring, callable without a strategy instance.
+
+        Returns dict with keys: trend, adx, momentum, macd, kdj, composite.
+        """
+        # Trend
+        from quanti.indicators import sma
+        ma = sma(closes, ma_period)
+        trend = 1.0 if (
+            not np.isnan(ma[-1]) and closes[-1] > ma[-1]
+        ) else 0.0
+
+        # ADX (simplified)
+        if len(closes) >= 28:
+            adx_v = ETFRotationStrategy._compute_adx(highs, lows, closes, 14)
+            adx_val = min(float(adx_v) / 50.0, 1.0) if not np.isnan(adx_v) else 0.5
+        else:
+            adx_val = 0.5
+
+        # 20-day momentum
+        if len(closes) >= 21 and closes[-21] > 1e-6:
+            ret = (closes[-1] / closes[-21] - 1) * 100
+            mom = min(max(ret / 15.0, 0), 1) if ret > 0 else 0
+        else:
+            mom = 0.5
+
+        # MACD signal
+        macd_sig = ETFRotationStrategy._macd_signal(
+            closes, macd_fast, macd_slow, macd_signal_period)
+
+        # KDJ signal
+        kdj_sig = ETFRotationStrategy._kdj_signal(highs, lows, closes, kdj_n)
+
+        composite = (w_trend * trend + w_adx * adx_val +
+                     w_momentum * mom + w_macd * macd_sig +
+                     w_kdj * kdj_sig)
+        return {
+            "trend": trend,
+            "adx": adx_val,
+            "momentum": mom,
+            "macd": macd_sig,
+            "kdj": kdj_sig,
+            "composite": composite,
+        }
 
     def _ma_rising(self, bars: list[Bar]) -> bool:
         closes = np.array([b.close for b in bars], dtype=np.float64)
